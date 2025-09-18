@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 
+
 # إن حدّدت NEUROSERVE_URL سنجرب الاتصال بسيرفر خارجي،
 # وإلا سنستعمل TestClient داخل العملية.
 BASE_URL = os.getenv("NEUROSERVE_URL")
@@ -127,6 +128,3 @@ def test_plugins_detail_endpoint() -> None:
 
     if not any_implemented:
         pytest.skip("Endpoint /plugins/{name} not implemented; skipping details test.")
-
-
-

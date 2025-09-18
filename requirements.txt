@@ -45,5 +45,3 @@ pdfminer.six
 pypdf
 pytest
 requests
-
-

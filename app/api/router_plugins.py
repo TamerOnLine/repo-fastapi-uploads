@@ -10,6 +10,7 @@ from fastapi import APIRouter, Body, HTTPException, Path, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+
 router = APIRouter(prefix="/plugins", tags=["plugins"])
 
 
@@ -225,7 +226,9 @@ async def run_plugin_task(
         except HTTPException:
             raise
         except Exception as e:  # noqa: BLE001
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Task '{task}' failed: {e!s}") from e
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Task '{task}' failed: {e!s}"
+            ) from e
 
     infer_fn = getattr(plugin, "infer", None)
     if callable(infer_fn):
@@ -240,7 +243,9 @@ async def run_plugin_task(
         except HTTPException:
             raise
         except Exception as e:  # noqa: BLE001
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Infer for '{task}' failed: {e!s}") from e
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Infer for '{task}' failed: {e!s}"
+            ) from e
 
     available = list(declared_tasks) if isinstance(declared_tasks, (list, tuple, set)) else []
     raise HTTPException(
