@@ -26,8 +26,6 @@ from typing import Any
 from app.plugins import loader
 
 
-# --- project-local dynamic caches (safe defaults) ---
-
 ROOT = Path(__file__).resolve().parents[1]
 HF_HOME_DEFAULT = ROOT / "models_cache" / "huggingface"
 TORCH_HOME_DEFAULT = ROOT / "models_cache" / "torch"

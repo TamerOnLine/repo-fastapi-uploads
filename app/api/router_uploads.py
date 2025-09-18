@@ -56,7 +56,7 @@ async def upload_pdf(file: Annotated[UploadFile, File(...)]) -> UploadResult:
     # Soft check; real validation (magic header) should be handled in storage
     allowed_types = {"application/pdf", "application/x-pdf", "application/acrobat"}
     if file.content_type and file.content_type.lower() not in allowed_types:
-        # Don’t fail hard — some browsers send `application/octet-stream`
+        # Donâ€™t fail hard â€” some browsers send `application/octet-stream`
         pass
 
     storage = _get_pdf_storage()
