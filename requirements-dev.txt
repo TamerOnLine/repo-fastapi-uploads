@@ -20,3 +20,6 @@ coverage          # standalone coverage reporting
 
 flake8            # linting for Python code
 flake8-pyproject  # flake8 config from pyproject.toml
+
+# pdf-reader
+httpx

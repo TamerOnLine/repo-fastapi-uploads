@@ -1,5 +1,8 @@
 {
+  "name": "dummy",
   "provider": "dummy",
-  "task": "ping",
-  "text": "test"
+  "tasks": [
+    "ping"
+  ],
+  "version": "0.1.0"
 }

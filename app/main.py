@@ -18,6 +18,8 @@ from app.core.logging_ import setup_logging
 from app.routes import plugins as plugins_routes
 from app.routes.workflow import router as workflow_router
 from app.runtime.model_pool import get_model_pool
+from app.routes.uploads import router as uploads_router
+
 
 
 # Import the plugin registry helper from your loader.
@@ -126,6 +128,7 @@ def favicon():
 # Routers
 app.include_router(plugins_routes.router, tags=["plugins"])
 app.include_router(workflow_router, prefix="/workflow", tags=["workflow"])
+app.include_router(uploads_router)
 
 # ========================
 # OpenAPI enrichment

@@ -181,3 +181,4 @@ env-info.txt
 # Local model cache
 models_cache/
 samples/
+uploads/

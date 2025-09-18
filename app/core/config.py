@@ -60,6 +60,8 @@ class Settings(BaseSettings):
     TEMPLATES_DIR: Path = Path("app/templates")
     UPLOAD_DIR: Path = Path("uploads")
     SAMPLES_DIR: Path = Path("samples")  # NEW
+    # Max upload size (MB) for PDFs
+    UPLOAD_MAX_MB: int = 20
 
     # ================================
     # CORS configuration

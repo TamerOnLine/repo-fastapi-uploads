@@ -1,7 +1,7 @@
-# dummy
+# pdf_reader
 
-**Provider:** dummy
-**Tasks:** ping
+**Provider:** local
+**Tasks:** extract_text
 
 ## Description
 Short description of what this plugin does and when to use it.
@@ -21,9 +21,9 @@ Short description of what this plugin does and when to use it.
 
 ### cURL Example
 ```bash
-curl -X POST "http://localhost:8000/plugins/dummy/ping" \
+curl -X POST "http://localhost:8000/plugins/pdf_reader/extract_text" \
      -H "Content-Type: application/json" \
-     -d '{{"input":"example"}}'
+     -d '{{"rel_path":"pdf/<uuid>_file.pdf","return_text": true}}'
 ```
 
 ### Python Example
@@ -31,8 +31,8 @@ curl -X POST "http://localhost:8000/plugins/dummy/ping" \
 import requests
 
 resp = requests.post(
-    "http://localhost:8000/plugins/dummy/ping",
-    json={{'input': 'example'}},
+    "http://localhost:8000/plugins/pdf_reader/extract_text",
+    json={{'rel_path': 'pdf/<uuid>_file.pdf', 'return_text': True}},
     timeout=60,
 )
 print(resp.json())

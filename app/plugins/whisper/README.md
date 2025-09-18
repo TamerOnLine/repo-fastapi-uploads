@@ -23,7 +23,7 @@ Short description of what this plugin does and when to use it.
 ```bash
 curl -X POST "http://localhost:8000/plugins/whisper/speech-to-text" \
      -H "Content-Type: application/json" \
-     -d '{"input":"example"}'
+     -d '{{"input":"example"}}'
 ```
 
 ### Python Example
@@ -32,7 +32,7 @@ import requests
 
 resp = requests.post(
     "http://localhost:8000/plugins/whisper/speech-to-text",
-    json={"input": "example"},
+    json={{'input': 'example'}},
     timeout=60,
 )
 print(resp.json())
