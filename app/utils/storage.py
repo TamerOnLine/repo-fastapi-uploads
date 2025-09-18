@@ -3,10 +3,10 @@ from __future__ import annotations
 
 import re
 import uuid
+from collections.abc import Iterator
 from pathlib import Path
-from typing import AsyncIterator, Iterable, Iterator, Tuple
 
-from fastapi import HTTPException, UploadFile, status
+from fastapi import HTTPException, UploadFile
 
 
 class LocalStorage:
@@ -55,7 +55,7 @@ class LocalStorage:
         if size > self.max_bytes:
             raise HTTPException(
                 status_code=413,
-                detail=f"File too large (>{self.max_bytes // (1024*1024)} MB)",
+                detail=f"File too large (>{self.max_bytes // (1024 * 1024)} MB)",
             )
 
         # quick magic header check
@@ -75,12 +75,12 @@ class LocalStorage:
         return {
             "ok": True,
             "filename": fname,
-            "rel_path": rel_path,         # relative to base_dir
+            "rel_path": rel_path,  # relative to base_dir
             "size_bytes": size,
             "url_hint": f"/static/{self.subdir}/{fname}" if self.subdir else f"/static/{fname}",
         }
 
-    def iter_files(self) -> Iterator[Tuple[str, int]]:
+    def iter_files(self) -> Iterator[tuple[str, int]]:
         """
         Yield (rel_path, size_bytes) for files under root (PDFs only).
         Used by /uploads listing endpoints.

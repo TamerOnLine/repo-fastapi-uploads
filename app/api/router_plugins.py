@@ -10,6 +10,7 @@ from fastapi import APIRouter, Body, HTTPException, Path
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+
 router = APIRouter(prefix="/plugins", tags=["plugins"])
 
 
@@ -244,6 +245,7 @@ async def run_plugin_task(
         status_code=404,
         detail=f"Task '{task}' not found in plugin '{name}'. Available: {available or ['<none>']}",
     )
+
 
 # Backward-compatible alias
 plugins = router

@@ -18,20 +18,22 @@ from app.api.router_plugins import router as plugins_router
 from app.api.router_services import router as services_router
 from app.api.router_uploads import router as uploads_router
 from app.api.router_workflows import router as workflows_router
-
 from app.core.config import get_settings
 from app.core.errors import register_exception_handlers
 from app.core.logging_ import setup_logging
 from app.runtime.model_pool import get_model_pool
 
+
 try:
     from app.plugins.loader import list_plugins  # returns dict{name: manifest} or list[str]
 except Exception:  # fallback
+
     def list_plugins():  # type: ignore
         return {}
 
 
 logger = logging.getLogger(__name__)
+
 
 # ========================
 # Lifespan handler
@@ -72,7 +74,7 @@ app = FastAPI(
         "defaultModelExpandDepth": 0,
         "docExpansion": "none",
     },
-    )
+)
 
 # Static files
 app.mount("/static", StaticFiles(directory=str(settings.STATIC_DIR)), name="static")
@@ -101,6 +103,7 @@ app.add_middleware(RequestIDMiddleware)
 
 # Register error handlers
 register_exception_handlers(app)
+
 
 # ========================
 # Routes
@@ -132,8 +135,6 @@ app.include_router(plugins_router)
 app.include_router(workflows_router)
 app.include_router(inference_router)
 app.include_router(auth_router)
-
-
 
 
 # ========================

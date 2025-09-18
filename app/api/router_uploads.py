@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Annotated
 
 from fastapi import APIRouter, File, HTTPException, UploadFile, status
 from fastapi.responses import FileResponse
@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from app.core.config import get_settings
 from app.utils.storage import LocalStorage
+
 
 router = APIRouter(prefix="/uploads", tags=["uploads"])
 
@@ -51,7 +52,7 @@ def _get_pdf_storage() -> LocalStorage:
     description="Uploads a PDF into uploads/pdf/ with soft content-type check and size limits.",
     status_code=status.HTTP_201_CREATED,
 )
-async def upload_pdf(file: UploadFile = File(...)) -> UploadResult:
+async def upload_pdf(file: Annotated[UploadFile, File(...)]) -> UploadResult:
     # Soft check; real validation (magic header) should be handled in storage
     allowed_types = {"application/pdf", "application/x-pdf", "application/acrobat"}
     if file.content_type and file.content_type.lower() not in allowed_types:
@@ -64,7 +65,7 @@ async def upload_pdf(file: UploadFile = File(...)) -> UploadResult:
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to save PDF: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to save PDF: {e}") from e
 
     return UploadResult(**saved)
 
@@ -101,7 +102,7 @@ def get_pdf(filename: str):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail=str(e)) from e
 
     if not abs_path.is_file():
         raise HTTPException(status_code=404, detail="File not found")

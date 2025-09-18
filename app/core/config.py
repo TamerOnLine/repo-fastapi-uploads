@@ -9,6 +9,7 @@ from typing import Any
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+
 # ------------------------------------------------------------------------------
 # .env (optional) — load early so we respect any user-provided overrides
 # ------------------------------------------------------------------------------
@@ -45,8 +46,8 @@ class Settings(BaseSettings):
     # ================================
     # Basic service configuration
     # ================================
-    APP_NAME: str = "NeuroServe",
-    VERSION: str = "0.1.0",
+    APP_NAME: str = ("NeuroServe",)
+    VERSION: str = ("0.1.0",)
     ENV: str = Field("development", description="development | staging | production")
     HOST: str = "0.0.0.0"
     PORT: int = 8000
@@ -121,9 +122,9 @@ class Settings(BaseSettings):
     # ================================
     # Pooling / Limits
     # ================================
-    MAX_ACTIVE_MODELS: int = 2          # how many heavy models can stay loaded (e.g., on GPU)
-    IDLE_UNLOAD_SECONDS: int = 600      # unload a model after N seconds of inactivity
-    MAX_CONCURRENCY_PER_PLUGIN: int = 2 # semaphore/queue per plugin
+    MAX_ACTIVE_MODELS: int = 2  # how many heavy models can stay loaded (e.g., on GPU)
+    IDLE_UNLOAD_SECONDS: int = 600  # unload a model after N seconds of inactivity
+    MAX_CONCURRENCY_PER_PLUGIN: int = 2  # semaphore/queue per plugin
 
     # ================================
     # pydantic-settings configuration

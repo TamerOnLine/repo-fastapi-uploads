@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from app.plugins.loader import get_plugin_instance
 from app.workflows import registry as wf
 
+
 # اختياري: list_plugins (قد لا تكون متاحة في بعض الإصدارات)
 try:
     from app.plugins.loader import list_plugins as _list_plugins  # type: ignore[attr-defined]
@@ -17,6 +18,7 @@ except Exception:  # pragma: no cover
     _list_plugins = None  # fallback
 
 router = APIRouter(prefix="/workflow", tags=["workflow"])
+
 
 # =========================
 # Models
@@ -27,6 +29,7 @@ class Step(BaseModel):
     task: str = Field(..., min_length=1)
     payload: dict[str, Any] = Field(default_factory=dict)
     timeout: int | None = None  # optional per-step timeout (not enforced here)
+
 
 class WorkflowRequest(BaseModel):
     sequence: list[Step] | None = None
@@ -39,6 +42,7 @@ class WorkflowRequest(BaseModel):
     max_new_tokens: int | None = 256
 
     return_: str | None = Field(default=None, alias="return")
+
 
 # =========================
 # Presets (examples)
@@ -60,6 +64,7 @@ PRESETS: dict[str, list[Step]] = {
     ],
 }
 
+
 # =========================
 # Helpers
 # =========================
@@ -71,6 +76,7 @@ def _lookup_path(obj: Any, dotted: str) -> Any:
         else:
             return None
     return cur
+
 
 def _inject_placeholders(value: Any, context: dict[str, Any]) -> Any:
     if isinstance(value, dict):
@@ -92,6 +98,7 @@ def _inject_placeholders(value: Any, context: dict[str, Any]) -> Any:
         return context.get(key)
     return value
 
+
 def _build_auto_sequence(req: WorkflowRequest) -> list[Step]:
     if req.audio_url:
         return [
@@ -109,6 +116,7 @@ def _build_auto_sequence(req: WorkflowRequest) -> list[Step]:
             )
         ]
     raise HTTPException(status_code=400, detail="auto mode requires 'audio_url' (or provide a preset/sequence)")
+
 
 def _resolve_sequence(req: WorkflowRequest) -> tuple[list[Step], str | None]:
     if req.sequence:
@@ -132,7 +140,11 @@ def _resolve_sequence(req: WorkflowRequest) -> tuple[list[Step], str | None]:
     if req.auto or req.audio_url:
         return (_build_auto_sequence(req), None)
 
-    raise HTTPException(status_code=400, detail="Provide one of: 'sequence', 'preset', or 'auto' (with suitable inputs).")
+    raise HTTPException(
+        status_code=400,
+        detail="Provide one of: 'sequence', 'preset', or 'auto' (with suitable inputs).",
+    )
+
 
 def _get_available_plugins() -> set[str]:
     if _list_plugins is None:
@@ -147,6 +159,7 @@ def _get_available_plugins() -> set[str]:
         return set(reg)
     return set()
 
+
 def _validate_sequence(seq: list[Step]) -> None:
     available = _get_available_plugins()
     if not available:
@@ -160,6 +173,7 @@ def _validate_sequence(seq: list[Step]) -> None:
                     "available_plugins": sorted(available),
                 },
             )
+
 
 async def _run_step(step: Step, context: dict[str, Any]) -> dict[str, Any]:
     try:
@@ -202,12 +216,14 @@ async def _run_step(step: Step, context: dict[str, Any]) -> dict[str, Any]:
 
     return result if isinstance(result, dict) else {"result": result}
 
+
 # =========================
 # Routes
 # =========================
 @router.get("/ping")
 def workflow_ping() -> dict[str, Any]:
     return {"ok": True}
+
 
 @router.get("/presets")
 def list_presets():
@@ -218,6 +234,7 @@ def list_presets():
         pass
     code_presets = list(PRESETS.keys())
     return {"ok": True, "presets": sorted(set(file_presets + code_presets))}
+
 
 @router.post("/run")
 async def run_workflow(req: WorkflowRequest) -> dict[str, Any]:

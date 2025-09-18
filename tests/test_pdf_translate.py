@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from app.main import app
 
+
 # يدعم:
 # - اختبار داخل العملية (TestClient)
 # - أو ضد سيرفر حي عبر NEUROSERVE_URL

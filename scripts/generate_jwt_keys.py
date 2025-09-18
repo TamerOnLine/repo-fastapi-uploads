@@ -1,17 +1,18 @@
 # scripts/generate_jwt_keys.py
 from __future__ import annotations
 
-import os
-from pathlib import Path
-import secrets
 import argparse
+import os
+import secrets
 import sys
+from pathlib import Path
+
 
 try:
-    from cryptography.hazmat.primitives.asymmetric import rsa, ec
-    from cryptography.hazmat.primitives import serialization
     from cryptography.hazmat.backends import default_backend
-except Exception as e:
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import ec, rsa
+except Exception:
     print("This script needs 'cryptography' package. Install it with:\n  pip install cryptography")
     sys.exit(1)
 

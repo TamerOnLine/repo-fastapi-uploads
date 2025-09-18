@@ -1,22 +1,23 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
-from app.core.config import get_settings
-from app.plugins.base import AIPlugin  # واجهة الإضافات عندك
 from fastapi import HTTPException
 
 # سنستخدم pdfminer لاستخراج النص، و pypdf لعدد الصفحات (سريع وموثوق)
 from pdfminer.high_level import extract_text
 from pypdf import PdfReader
 
+from app.core.config import get_settings
+from app.plugins.base import AIPlugin  # واجهة الإضافات عندك
+
 
 class Plugin(AIPlugin):
     name = "pdf_reader"
     tasks = ["extract_text"]
 
-    def _resolve_path(self, payload: Dict[str, Any]) -> Path:
+    def _resolve_path(self, payload: dict[str, Any]) -> Path:
         """
         يبني المسار بأمان إما من rel_path (مفضل) أو path مطلق.
         نتأكد أنه داخل UPLOAD_DIR فقط (حماية من path traversal).
@@ -48,7 +49,7 @@ class Plugin(AIPlugin):
 
         return target
 
-    def extract_text(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    def extract_text(self, payload: dict[str, Any]) -> dict[str, Any]:
         """
         المدخلات:
           - rel_path: "pdf/<stored_name>" (مفضل) أو path مطلق داخل uploads
@@ -76,7 +77,7 @@ class Plugin(AIPlugin):
             else:
                 text = extract_text(str(pdf_path))
         except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Text extraction failed: {e}")
+            raise HTTPException(status_code=500, detail=f"Text extraction failed: {e}") from e
 
         result = {
             "ok": True,

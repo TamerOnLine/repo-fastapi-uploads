@@ -4,10 +4,11 @@ from __future__ import annotations
 import inspect
 from importlib import import_module
 from pathlib import Path
-from typing import Any
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, HTTPException
 from pydantic import BaseModel
+
 
 router = APIRouter(prefix="/services", tags=["services"])
 
@@ -92,7 +93,7 @@ def service_meta(name: str) -> ServiceMeta:
 async def call_service(
     name: str,
     task: str,
-    payload: dict[str, Any] = Body(..., description="Arbitrary JSON payload for the service task."),
+    payload: Annotated[dict[str, Any], Body(..., description="Arbitrary JSON payload for the service task.")],
 ) -> dict[str, Any]:
     """
     Invoke a code-only service task.

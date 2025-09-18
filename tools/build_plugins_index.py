@@ -41,6 +41,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
+
 # ---------------------------
 # Paths
 # ---------------------------
@@ -53,6 +54,7 @@ OUT_SERVICES_DIR = OUT_DIR / "services"
 OUT_PLUGINS_MD = OUT_DIR / "plugins-overview.md"
 OUT_SERVICES_MD = OUT_DIR / "services-overview.md"
 
+
 # ---------------------------
 # stdout unicode helpers
 # ---------------------------
@@ -60,6 +62,7 @@ def _supports_utf8() -> bool:
     enc = (getattr(sys.stdout, "encoding", None) or "") or locale.getpreferredencoding(False) or ""
     enc_up = enc.upper()
     return "UTF-8" in enc_up or "UTF8" in enc_up
+
 
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # Python ≥3.7
@@ -71,6 +74,7 @@ DOC = "📄" if _supports_utf8() else "[DOC]"
 UPD = "📝" if _supports_utf8() else "[UPD]"
 ERR = "❌" if _supports_utf8() else "[ERR]"
 
+
 # ---------------------------
 # Data models
 # ---------------------------
@@ -78,23 +82,25 @@ ERR = "❌" if _supports_utf8() else "[ERR]"
 class ItemMeta:
     kind: Literal["plugin", "service"]
     folder: str
-    class_name: str                  # "Plugin" or "Service"
-    base_dir: Path                   # PLUGINS_DIR or SERVICES_DIR
-    code_file: Path                  # plugin.py or service.py
-    manifest_file: Path              # app/.../manifest.json
-    readme_file: Path                # docs/.../<name>/README.md (plugins) | app/services/<name>/README.md
-    name: str                        # display name (defaults to folder)
+    class_name: str  # "Plugin" or "Service"
+    base_dir: Path  # PLUGINS_DIR or SERVICES_DIR
+    code_file: Path  # plugin.py or service.py
+    manifest_file: Path  # app/.../manifest.json
+    readme_file: Path  # docs/.../<name>/README.md (plugins) | app/services/<name>/README.md
+    name: str  # display name (defaults to folder)
     provider: str | None
     tasks: list[str]
     description: str
     models: list[dict] | None
     example_payload: str | None
 
+
 # ---------------------------
 # IO helpers
 # ---------------------------
 def ensure_dir(p: Path) -> None:
     p.mkdir(parents=True, exist_ok=True)
+
 
 def write_if_changed(path: Path, content: str, encoding: str = "utf-8") -> bool:
     old = None
@@ -109,6 +115,7 @@ def write_if_changed(path: Path, content: str, encoding: str = "utf-8") -> bool:
     path.write_text(content, encoding=encoding)
     return True
 
+
 def write_json_if_changed(path: Path, data: dict, *, indent: int = 2) -> bool:
     new = json.dumps(data, ensure_ascii=False, indent=indent, sort_keys=True)
     if path.exists():
@@ -122,6 +129,7 @@ def write_json_if_changed(path: Path, data: dict, *, indent: int = 2) -> bool:
     path.write_text(new + "\n", encoding="utf-8")
     return True
 
+
 # ---------------------------
 # AST readers
 # ---------------------------
@@ -131,6 +139,7 @@ def _parse_ast(py_file: Path) -> ast.AST | None:
     except Exception:
         return None
 
+
 def _find_class(tree: ast.AST | None, class_name: str) -> ast.ClassDef | None:
     if not tree:
         return None
@@ -138,6 +147,7 @@ def _find_class(tree: ast.AST | None, class_name: str) -> ast.ClassDef | None:
         if isinstance(node, ast.ClassDef) and node.name == class_name:
             return node
     return None
+
 
 def _read_class_attr_list_of_str(cls: ast.ClassDef, attr: str) -> list[str]:
     for stmt in cls.body:
@@ -151,6 +161,7 @@ def _read_class_attr_list_of_str(cls: ast.ClassDef, attr: str) -> list[str]:
                     return vals
     return []
 
+
 def _read_class_attr_list_of_dict(cls: ast.ClassDef, attr: str) -> list[dict]:
     for stmt in cls.body:
         if isinstance(stmt, ast.Assign):
@@ -160,7 +171,7 @@ def _read_class_attr_list_of_dict(cls: ast.ClassDef, attr: str) -> list[dict]:
                     for elt in stmt.value.elts:
                         if isinstance(elt, ast.Dict):
                             d: dict[str, Any] = {}
-                            for k, v in zip(elt.keys, elt.values):
+                            for k, v in zip(elt.keys, elt.values, strict=False):
                                 if isinstance(k, ast.Constant) and isinstance(k.value, str):
                                     if isinstance(v, ast.Constant):
                                         d[k.value] = v.value
@@ -168,6 +179,7 @@ def _read_class_attr_list_of_dict(cls: ast.ClassDef, attr: str) -> list[dict]:
                                 items.append(d)
                     return items
     return []
+
 
 def _read_class_attr_str(cls: ast.ClassDef, attr: str) -> str | None:
     for stmt in cls.body:
@@ -177,10 +189,12 @@ def _read_class_attr_str(cls: ast.ClassDef, attr: str) -> str | None:
                     return stmt.value.value.strip()
     return None
 
+
 def _read_docstring(cls: ast.ClassDef | None) -> str:
     if not cls:
         return ""
     return (ast.get_docstring(cls) or "").strip()
+
 
 # ---------------------------
 # Path helpers
@@ -258,6 +272,7 @@ def discover_items(kind: Literal["plugin", "service"]) -> list[ItemMeta]:
         )
     return items
 
+
 # ---------------------------
 # Rendering
 # ---------------------------
@@ -305,6 +320,7 @@ print(resp.json())
 - Add relevant reference links (model cards, docs) if applicable.
 """
 
+
 def format_models_block(models: list[dict] | None) -> str:
     if not models:
         return "- _None_"
@@ -317,6 +333,7 @@ def format_models_block(models: list[dict] | None) -> str:
             safe = json.dumps(m, ensure_ascii=False)
             lines.append(f"- {safe}")
     return "\n".join(lines)
+
 
 def render_readme(it: ItemMeta) -> str:
     base = "plugins" if it.kind == "plugin" else "services"
@@ -351,6 +368,7 @@ def render_readme(it: ItemMeta) -> str:
         example_payload_py=example_payload_py,
     )
 
+
 def render_overview_md(kind: Literal["plugin", "service"], items: list[ItemMeta]) -> str:
     title = "Plugins Overview" if kind == "plugin" else "Services Overview"
     hdr = f"# {title}\n\nTotal: **{len(items)}**\n\n"
@@ -366,6 +384,7 @@ def render_overview_md(kind: Literal["plugin", "service"], items: list[ItemMeta]
         files_links = f"[README]({readme_rel}) · [code]({code_rel}) · [manifest]({manifest_rel})"
         lines.append(f"| {it.name} | `{it.folder}` | {it.provider or '-'} | {tasks_fmt} | {files_links} |")
     return hdr + "\n".join(lines) + "\n"
+
 
 # ---------------------------
 # Writers
@@ -389,6 +408,7 @@ def write_readmes(items: list[ItemMeta], *, force: bool, verbose: bool) -> tuple
             if verbose:
                 print(f"{OK} README unchanged: {it.readme_file}")
     return created, updated
+
 
 def write_manifests(items: list[ItemMeta], *, force: bool, verbose: bool) -> int:
     changed = 0
@@ -414,6 +434,7 @@ def write_manifests(items: list[ItemMeta], *, force: bool, verbose: bool) -> int
                 if verbose:
                     print(f"{UPD} Updated manifest: {it.manifest_file}")
     return changed
+
 
 # ---------------------------
 # Main
@@ -467,12 +488,14 @@ def main(argv: list[str] | None = None) -> int:
 
     total_items = len(items_plugins) + len(items_services)
     print(f"{OK} Indexed {total_items} item(s): {len(items_plugins)} plugin(s), {len(items_services)} service(s).")
-    print(f"{DOC} READMEs  -> created {cr_p+cr_s}, updated {up_p+up_s}.")
-    print(f"{DOC} Overviews-> plugins({ 'updated' if changed_over_p else 'unchanged' }), services({ 'updated' if changed_over_s else 'unchanged' }).")
+    print(f"{DOC} READMEs  -> created {cr_p + cr_s}, updated {up_p + up_s}.")
+    print(
+        f"{DOC} Overviews-> plugins({'updated' if changed_over_p else 'unchanged'}), services({'updated' if changed_over_s else 'unchanged'})."  # noqa: E501
+    )
     if args.force_manifest:
-        print(f"{DOC} Manifests-> created/updated {man_p+man_s}.")
+        print(f"{DOC} Manifests-> created/updated {man_p + man_s}.")
     else:
-        print(f"{DOC} Manifests-> updated-if-changed {man_p+man_s} (no create).")
+        print(f"{DOC} Manifests-> updated-if-changed {man_p + man_s} (no create).")
 
     return 0
 

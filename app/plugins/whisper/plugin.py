@@ -3,11 +3,8 @@ from __future__ import annotations
 
 import base64
 import io
-import json
-import os
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 from urllib.parse import urlparse
 
 import requests
@@ -48,7 +45,7 @@ def _is_url(s: str) -> bool:
         return False
 
 
-def _load_audio_mono16k(audio_bytes: bytes) -> Tuple[list[float], int]:
+def _load_audio_mono16k(audio_bytes: bytes) -> tuple[list[float], int]:
     """
     Load audio from bytes into a mono 16k waveform (float32 list) and return (samples, sample_rate).
     Prefer soundfile or librosa if available; otherwise try torchaudio.
@@ -105,8 +102,8 @@ def _load_audio_mono16k(audio_bytes: bytes) -> Tuple[list[float], int]:
 
     # Try torchaudio
     try:
-        import torchaudio
         import torch
+        import torchaudio
 
         with io.BytesIO(audio_bytes) as bio:
             wav, sr = torchaudio.load(bio)  # [channels, time]
@@ -122,12 +119,10 @@ def _load_audio_mono16k(audio_bytes: bytes) -> Tuple[list[float], int]:
     except Exception:
         pass
 
-    raise RuntimeError(
-        "Failed to load audio. Please install one of: soundfile, librosa, or torchaudio."
-    )
+    raise RuntimeError("Failed to load audio. Please install one of: soundfile, librosa, or torchaudio.")
 
 
-def _read_audio_from_payload(payload: Dict[str, Any]) -> Tuple[list[float], int]:
+def _read_audio_from_payload(payload: dict[str, Any]) -> tuple[list[float], int]:
     """
     Accepts:
       - rel_path: relative path under UPLOAD_DIR (e.g., 'audio/sample.wav')
@@ -235,14 +230,14 @@ class Plugin(AIPlugin):
     def load(self) -> None:
         self._ensure_loaded()
 
-    def infer(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    def infer(self, payload: dict[str, Any]) -> dict[str, Any]:
         # Fallback to transcribe for legacy compatibility
         return self.transcribe(payload)
 
     # ============================
     # Task: /plugins/whisper/transcribe
     # ============================
-    def transcribe(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    def transcribe(self, payload: dict[str, Any]) -> dict[str, Any]:
         """
         Parameters (payload):
           - rel_path | path | url | base64 : audio source (required)
@@ -271,7 +266,7 @@ class Plugin(AIPlugin):
 
         # Try pipeline first (simple & robust)
         if _PIPELINE is not None:
-            pipe_kwargs: Dict[str, Any] = {
+            pipe_kwargs: dict[str, Any] = {
                 "return_timestamps": "word" if want_segments else False,
             }
 
@@ -301,10 +296,8 @@ class Plugin(AIPlugin):
 
             # Standardize output
             text = out["text"] if isinstance(out, dict) and "text" in out else str(out)
-            language = (
-                out.get("language") if isinstance(out, dict) else explicit_lang or None
-            )
-            result: Dict[str, Any] = {
+            language = out.get("language") if isinstance(out, dict) else explicit_lang or None
+            result: dict[str, Any] = {
                 "ok": True,
                 "text": text,
                 "language": language,
@@ -328,13 +321,11 @@ class Plugin(AIPlugin):
             return result
 
         # Fallback: manual generate() with processor+model
-        from transformers import GenerationConfig
         import numpy as np
+        from transformers import GenerationConfig
 
         audio_np = np.asarray(samples, dtype="float32")
-        inputs = _PROCESSOR.feature_extractor(
-            audio_np, sampling_rate=sr, return_tensors="pt"
-        )
+        inputs = _PROCESSOR.feature_extractor(audio_np, sampling_rate=sr, return_tensors="pt")
         input_features = inputs.input_features.to(_MODEL.device)
 
         gen_kwargs = {}
@@ -349,9 +340,7 @@ class Plugin(AIPlugin):
                 language=explicit_lang if explicit_lang else None,
                 task=task if task else "transcribe",
             )
-            generation_config = GenerationConfig.forced_decoder_ids_for_generation(
-                forced_ids
-            )
+            generation_config = GenerationConfig.forced_decoder_ids_for_generation(forced_ids)
         except Exception:
             generation_config = None
 

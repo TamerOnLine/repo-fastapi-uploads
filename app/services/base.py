@@ -1,10 +1,13 @@
 from __future__ import annotations
-from typing import Any, Dict
+
+from typing import Any
+
 
 class CodeService:
     """
     Base for lightweight, code-only services (no heavy ML model loading).
     """
+
     name: str = "service"
     tasks: list[str] = []
 
@@ -12,6 +15,6 @@ class CodeService:
         # optional light init
         return
 
-    def infer(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+    def infer(self, payload: dict[str, Any]) -> dict[str, Any]:
         # compatibility shim (not used directly; implement task methods instead)
         return {"ok": True}

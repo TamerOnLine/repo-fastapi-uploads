@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """
 Dynamic prefetch for all available plugins.
 
@@ -24,13 +23,16 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from app.plugins import loader
+
+
 # --- project-local dynamic caches (safe defaults) ---
 
 ROOT = Path(__file__).resolve().parents[1]
 HF_HOME_DEFAULT = ROOT / "models_cache" / "huggingface"
 TORCH_HOME_DEFAULT = ROOT / "models_cache" / "torch"
 
-# 
+#
 os.environ.setdefault("HF_HOME", str(HF_HOME_DEFAULT))
 os.environ.setdefault("TORCH_HOME", str(TORCH_HOME_DEFAULT))
 
@@ -38,22 +40,23 @@ os.environ.setdefault("TORCH_HOME", str(TORCH_HOME_DEFAULT))
 HF_HOME_DEFAULT.mkdir(parents=True, exist_ok=True)
 TORCH_HOME_DEFAULT.mkdir(parents=True, exist_ok=True)
 
-# 
+#
 os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 
 
 # Optional: load .env if present
 try:
     from dotenv import load_dotenv
+
     load_dotenv()
 except Exception:
     pass
 
 # Use your real project loader
-from app.plugins import loader  # discover(), all_meta(), get()
 
 
 # ============ utils ============
+
 
 def info(title: str) -> None:
     print("\n" + "=" * 80)
@@ -86,6 +89,7 @@ def _snapshot_hf(model_id: str, *, dry: bool = False) -> None:
     # 1) transformers (lightweight config fetch)
     try:
         from transformers import AutoConfig
+
         _ = AutoConfig.from_pretrained(model_id, trust_remote_code=True)
         return
     except Exception:
@@ -93,6 +97,7 @@ def _snapshot_hf(model_id: str, *, dry: bool = False) -> None:
     # 2) huggingface_hub snapshot (heavier but robust)
     try:
         from huggingface_hub import snapshot_download
+
         snapshot_download(repo_id=model_id, local_files_only=False, resume_download=True)
     except Exception as e:
         warn(f"snapshot_download failed for {model_id}: {e}")
@@ -106,6 +111,7 @@ def _prefetch_torchvision(name: str, *, dry: bool = False) -> None:
             print("  - would prefetch torchvision resnet18 weights")
             return
         from torchvision.models import ResNet18_Weights, resnet18
+
         _ = resnet18(weights=ResNet18_Weights.IMAGENET1K_V1)
     else:
         warn(f"unknown torchvision weight: {name}")
@@ -133,6 +139,7 @@ def _prefetch_entry(entry: dict[str, Any], *, dry: bool = False) -> None:
 
 # ============ manifest helpers ============
 
+
 def _collect_from_manifest(meta: dict[str, Any]) -> list[dict]:
     """Read models from plugin's manifest.json -> 'models'."""
     path = meta.get("manifest_file")
@@ -152,6 +159,7 @@ def _collect_from_manifest(meta: dict[str, Any]) -> list[dict]:
 
 
 # ============ main logic ============
+
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Dynamic prefetch for all available plugins.")
