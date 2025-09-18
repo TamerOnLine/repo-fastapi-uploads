@@ -1,1 +1,34 @@
+# Write .gitattributes
+$gitattributes = @"
 * text=auto eol=lf
+
+# Enforce LF for main file types
+*.py   text eol=lf
+*.md   text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.json text eol=lf
+*.sh   text eol=lf
+*.ps1  text eol=lf
+
+# Binary files
+*.png  binary
+*.jpg  binary
+*.pdf  binary
+"@
+$gitattributes | Set-Content .gitattributes -Encoding utf8
+Add-Content .gitattributes "`n"   # ensure final newline
+
+# (Optional) Write .editorconfig
+$editorconfig = @"
+root = true
+
+[*]
+end_of_line = lf
+charset = utf-8
+insert_final_newline = true
+indent_style = space
+indent_size = 4
+"@
+$editorconfig | Set-Content .editorconfig -Encoding utf8
+Add-Content .editorconfig "`n"    # ensure final newline
