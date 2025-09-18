@@ -1,0 +1,12 @@
+{
+  "code": "app/services/pdf_reader/service.py",
+  "example_payload": "{}",
+  "folder": "pdf_reader",
+  "kind": "service",
+  "models": [],
+  "name": "pdf_reader",
+  "provider": null,
+  "tasks": [
+    "extract_text"
+  ]
+}

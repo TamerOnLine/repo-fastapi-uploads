@@ -1,0 +1,13 @@
+{
+  "code": "app/services/text_tools/plugin.py",
+  "example_payload": "{}",
+  "folder": "text_tools",
+  "kind": "service",
+  "models": [],
+  "name": "text_tools",
+  "provider": null,
+  "tasks": [
+    "arabic_normalize",
+    "spellcheck_ar"
+  ]
+}
