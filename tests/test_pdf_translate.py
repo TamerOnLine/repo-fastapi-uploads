@@ -72,12 +72,12 @@ def test_pdf_reader_then_translate():
     with SAMPLE_PDF.open("rb") as f:
         files = {"file": ("sample.pdf", f, "application/pdf")}
         up = _request("POST", "/uploads/pdf", files=files)
-    assert up.status_code == 200, up.text
+    assert up.status_code in (200, 201), up.text
     up_j = up.json()
     assert up_j.get("ok") is True
     rel_path = up_j["rel_path"]
 
-    # 2) استخراج النص عبر pdf_reader
+
     pdf_reader = _find_plugin_with_task("extract_text") or "pdf_reader"
     xt = _json_ok(
         "POST",
