@@ -1,9 +1,0 @@
-{
-  "example_payload": "{\"rel_path\":\"pdf/<uuid>_file.pdf\",\"return_text\": true}",
-  "name": "pdf_reader",
-  "provider": "local",
-  "tasks": [
-    "extract_text"
-  ],
-  "version": "0.1.0"
-}

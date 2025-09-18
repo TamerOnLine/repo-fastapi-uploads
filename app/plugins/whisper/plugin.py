@@ -1,270 +1,372 @@
+# app/plugins/whisper/plugin.py
 from __future__ import annotations
 
-import threading
-import time
-import traceback
+import base64
+import io
+import json
+import os
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, Dict, Optional, Tuple
 from urllib.parse import urlparse
 
-import numpy as np
 import requests
-import torch
-import torchaudio
-from transformers import AutoProcessor, WhisperForConditionalGeneration
 
 from app.core.config import get_settings
 from app.plugins.base import AIPlugin
-from app.runtime import pick_device, pick_dtype
-from app.runtime.model_pool import get_model_pool
 
 
-def _to_mono_tensor(w: torch.Tensor) -> torch.Tensor:
-    """Ensure mono layout shaped as (1, T)."""
-    if w.dim() == 2 and w.size(0) > 1:
-        return w.mean(dim=0, keepdim=True)
-    if w.dim() == 1:
-        return w.unsqueeze(0)
-    return w
+# ============================
+# Globals (lazy-loaded once)
+# ============================
+_MODEL = None
+_PROCESSOR = None
+_PIPELINE = None  # optional: transformers pipeline for ASR
 
 
+# ============================
+# Helpers
+# ============================
+def _safe_int(v: Any, default: int) -> int:
+    try:
+        return int(v)
+    except Exception:
+        return default
+
+
+def _fetch_bytes_from_url(url: str, timeout: int = 30) -> bytes:
+    resp = requests.get(url, timeout=timeout)
+    resp.raise_for_status()
+    return resp.content
+
+
+def _is_url(s: str) -> bool:
+    try:
+        p = urlparse(str(s))
+        return p.scheme in ("http", "https")
+    except Exception:
+        return False
+
+
+def _load_audio_mono16k(audio_bytes: bytes) -> Tuple[list[float], int]:
+    """
+    Load audio from bytes into a mono 16k waveform (float32 list) and return (samples, sample_rate).
+    Prefer soundfile or librosa if available; otherwise try torchaudio.
+
+    Returns:
+        (samples, 16000)
+    Raises:
+        RuntimeError if no supported backend is available.
+    """
+    # Try soundfile
+    try:
+        import soundfile as sf
+
+        with io.BytesIO(audio_bytes) as bio:
+            data, sr = sf.read(bio, dtype="float32", always_2d=False)
+        # Convert to mono
+        import numpy as np
+
+        if data.ndim > 1:
+            data = data.mean(axis=1)
+        # Resample if needed
+        if sr != 16000:
+            try:
+                import librosa
+
+                data = librosa.resample(y=data, orig_sr=sr, target_sr=16000)
+                sr = 16000
+            except Exception:
+                # Fallback: simple naive resample (not ideal)
+                import numpy as np
+
+                ratio = 16000 / float(sr)
+                new_len = int(round(len(data) * ratio))
+                if new_len > 1:
+                    # linear interpolation
+                    x_old = np.linspace(0, 1, num=len(data), endpoint=False)
+                    x_new = np.linspace(0, 1, num=new_len, endpoint=False)
+                    data = np.interp(x_new, x_old, data).astype("float32")
+                    sr = 16000
+        return data.tolist(), 16000
+    except Exception:
+        pass
+
+    # Try librosa directly
+    try:
+        import librosa
+        import numpy as np
+
+        y, sr = librosa.load(io.BytesIO(audio_bytes), sr=16000, mono=True)
+        y = y.astype("float32")
+        return y.tolist(), 16000
+    except Exception:
+        pass
+
+    # Try torchaudio
+    try:
+        import torchaudio
+        import torch
+
+        with io.BytesIO(audio_bytes) as bio:
+            wav, sr = torchaudio.load(bio)  # [channels, time]
+        if wav.dim() == 2 and wav.size(0) > 1:
+            wav = wav.mean(dim=0, keepdim=True)
+        wav = wav.squeeze(0)  # [time]
+        # Resample if needed
+        if sr != 16000:
+            resampler = torchaudio.transforms.Resample(sr, 16000)
+            wav = resampler(wav)
+            sr = 16000
+        return wav.to(dtype=torch.float32).cpu().numpy().tolist(), 16000
+    except Exception:
+        pass
+
+    raise RuntimeError(
+        "Failed to load audio. Please install one of: soundfile, librosa, or torchaudio."
+    )
+
+
+def _read_audio_from_payload(payload: Dict[str, Any]) -> Tuple[list[float], int]:
+    """
+    Accepts:
+      - rel_path: relative path under UPLOAD_DIR (e.g., 'audio/sample.wav')
+      - path: absolute or relative (prefer rel_path)
+      - url: http(s) url
+      - base64: base64-encoded audio (raw file)
+    Returns mono 16k samples as float list and sample rate (16000).
+    """
+    settings = get_settings()
+    # 1) rel_path under uploads/
+    rel_path = payload.get("rel_path")
+    if rel_path:
+        p = (Path(settings.UPLOAD_DIR) / rel_path).resolve()
+        if not p.is_file():
+            raise FileNotFoundError(f"Audio file not found: {p}")
+        data = p.read_bytes()
+        return _load_audio_mono16k(data)
+
+    # 2) explicit path
+    path = payload.get("path")
+    if path and not _is_url(str(path)):
+        p = Path(path).expanduser().resolve()
+        if not p.is_file():
+            raise FileNotFoundError(f"Audio file not found: {p}")
+        data = p.read_bytes()
+        return _load_audio_mono16k(data)
+
+    # 3) url
+    url = payload.get("url")
+    if url and _is_url(str(url)):
+        data = _fetch_bytes_from_url(str(url))
+        return _load_audio_mono16k(data)
+
+    # 4) base64
+    b64 = payload.get("base64")
+    if b64:
+        # if dict with "data", support that too
+        if isinstance(b64, dict):
+            b64 = b64.get("data")
+        data = base64.b64decode(str(b64))
+        return _load_audio_mono16k(data)
+
+    raise ValueError("No audio source provided (rel_path | path | url | base64).")
+
+
+# ============================
+# Plugin implementation
+# ============================
 class Plugin(AIPlugin):
-    tasks = ["speech-to-text"]
+    """
+    Whisper ASR plugin.
 
-    def load(self) -> None:
-        """
-        Prepare plugin (device, processor, concurrency control), but DO NOT
-        load the heavy model here. The model is loaded lazily via ModelPool
-        on first use.
-        """
-        self.settings = get_settings()
-        self.dev = pick_device()
-        self.model_name = "openai/whisper-small"
-        self.processor = AutoProcessor.from_pretrained(self.model_name)
+    Tasks:
+      - transcribe:  {rel_path|url|base64}[, language, task, return_segments, translate]
+                     -> {'text', 'language', 'segments?[]', 'duration?'}
+    """
 
-        self._dtype = pick_dtype(str(self.dev))
-        self._model_key = f"whisper::{self.model_name}::{self.dev}"
-        self._sem = threading.Semaphore(self.settings.MAX_CONCURRENCY_PER_PLUGIN)
+    name = "whisper"
+    tasks = ["transcribe"]
 
-        print("[plugin] whisper ready (lazy load) on", self.dev)
+    # Let the dynamic prefetcher know the required huggingface model
+    REQUIRED_MODELS = [{"type": "hf", "id": "openai/whisper-small"}]
 
-    def _factory(self):
-        """
-        Create and return a ready-to-use model (moved to device, eval, proper dtype).
-        Called by ModelPool only when the model is not loaded yet.
-        """
-        if torch.cuda.is_available():
-            torch.set_float32_matmul_precision("high")
-            torch.backends.cuda.matmul.allow_tf32 = True
+    def _ensure_loaded(self) -> None:
+        global _MODEL, _PROCESSOR, _PIPELINE
+        if _MODEL is not None and _PROCESSOR is not None:
+            return
 
-        model = (
-            WhisperForConditionalGeneration.from_pretrained(
-                self.model_name,
-                low_cpu_mem_usage=True,
-                dtype=self._dtype,
-            )
-            .to(self.dev)
-            .eval()
+        # Lazily import heavy deps
+        from transformers import (
+            AutoProcessor,
+            WhisperForConditionalGeneration,
+            pipeline,
         )
-        return model
 
-    def _get_model(self):
-        """
-        Get model from the global pool (loads on first call only).
-        """
-        pool = get_model_pool()
-        return pool.get(self._model_key, self._factory)
+        model_id = "openai/whisper-small"
+        _PROCESSOR = AutoProcessor.from_pretrained(model_id)
+        _MODEL = WhisperForConditionalGeneration.from_pretrained(model_id)
 
-    def _download_audio(self, url: str, dst: Path, timeout: int = 30) -> None:
-        """Download audio content from the specified URL to the given destination path."""
-        r = requests.get(url, stream=True, timeout=timeout)
-        r.raise_for_status()
-        with open(dst, "wb") as f:
-            for chunk in r.iter_content(chunk_size=8192):
-                if chunk:
-                    f.write(chunk)
-
-    def _load_audio_16k_mono(self, path: Path, max_seconds: int = 600) -> tuple[torch.Tensor, int]:
-        """
-        Load audio file and return waveform as 1D float32 tensor in [-1..1], sampled at 16kHz.
-
-        Args:
-            path (Path): Path to the audio file.
-            max_seconds (int): Maximum length of audio in seconds.
-
-        Returns:
-            tuple[torch.Tensor, int]: A tuple containing the mono waveform and sample rate.
-        """
-        waveform: torch.Tensor | None = None
-        sr: int | None = None
-
+        # Optional pipeline (can be handy for simple usage)
+        # Note: device_map="auto" will place on CUDA if available
         try:
-            waveform, sr = torchaudio.load(str(path))
+            _PIPELINE = pipeline(
+                "automatic-speech-recognition",
+                model=_MODEL,
+                tokenizer=_PROCESSOR.tokenizer,
+                feature_extractor=_PROCESSOR.feature_extractor,
+                device_map="auto",
+            )
         except Exception:
+            _PIPELINE = None
+
+    # Optional prefetch hook (used by dynamic prefetch script)
+    def prefetch(self) -> None:
+        try:
+            from transformers import AutoProcessor, WhisperForConditionalGeneration
+
+            _ = AutoProcessor.from_pretrained("openai/whisper-small")
+            _ = WhisperForConditionalGeneration.from_pretrained("openai/whisper-small")
+        except Exception:
+            # leave fallback to REQUIRED_MODELS in prefetch script
             pass
 
-        if waveform is None:
-            try:
-                import soundfile as sf
+    # Legacy method required by AIPlugin; not used directly here
+    def load(self) -> None:
+        self._ensure_loaded()
 
-                data, sr = sf.read(str(path), dtype="float32", always_2d=True)
-                waveform = torch.from_numpy(data).permute(1, 0)
-            except Exception:
-                pass
+    def infer(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        # Fallback to transcribe for legacy compatibility
+        return self.transcribe(payload)
 
-        if waveform is None:
-            import wave
-
-            try:
-                with wave.open(str(path), "rb") as wf:
-                    sr = wf.getframerate()
-                    n = wf.getnframes()
-                    ch = wf.getnchannels()
-                    sw = wf.getsampwidth()
-                    raw = wf.readframes(n)
-            except Exception as err3:
-                raise RuntimeError(f"Failed to load audio file: {path}") from err3
-
-            if sw != 2:
-                raise RuntimeError("Unsupported WAV sample width; please use 16-bit PCM.")
-
-            audio = np.frombuffer(raw, dtype=np.int16).astype(np.float32) / 32768.0
-            if ch > 1:
-                audio = audio.reshape(-1, ch).mean(axis=1)
-            waveform = torch.from_numpy(audio).unsqueeze(0)
-
-        if waveform is None or waveform.numel() == 0:
-            raise RuntimeError("Empty or unreadable audio file.")
-
-        waveform = _to_mono_tensor(waveform)
-
-        if waveform.dtype != torch.float32:
-            if waveform.dtype == torch.int16:
-                waveform = (waveform.to(torch.float32) / 32768.0).clamp_(-1.0, 1.0)
-            elif waveform.dtype == torch.int32:
-                waveform = (waveform.to(torch.float32) / 2147483648.0).clamp_(-1.0, 1.0)
-            else:
-                waveform = waveform.to(torch.float32)
-
-        waveform = waveform - waveform.mean(dim=-1, keepdim=True)
-
-        if sr is None:
-            raise RuntimeError("Sample rate could not be determined.")
-
-        if max_seconds and max_seconds > 0:
-            max_len = int(sr * max_seconds)
-            if waveform.size(-1) > max_len:
-                waveform = waveform[..., :max_len]
-
-        if sr != 16000:
-            waveform = torchaudio.functional.resample(waveform, sr, 16000)
-            sr = 16000
-
-        waveform = waveform.clamp_(-1.0, 1.0).squeeze(0).contiguous()
-        if not torch.isfinite(waveform).all():
-            waveform = torch.nan_to_num(waveform, nan=0.0, posinf=1.0, neginf=-1.0)
-
-        return waveform, sr
-
-    def infer(self, payload: dict) -> dict:
+    # ============================
+    # Task: /plugins/whisper/transcribe
+    # ============================
+    def transcribe(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Perform speech-to-text inference using the Whisper model.
-
-        Args:
-            payload (dict): Dictionary containing 'audio_url' or 'input', and optional parameters.
-
-        Returns:
-            dict: A dictionary with transcription output or error details.
+        Parameters (payload):
+          - rel_path | path | url | base64 : audio source (required)
+          - language: explicit language code (e.g., 'ar', 'en'); if None -> auto detect
+          - task: 'transcribe' (default) or 'translate' (force English)
+          - translate: bool, shortcut for task='translate'
+          - return_segments: bool, default False
+          - chunk_length_s: float (pipeline-only)
+          - stride_length_s: float (pipeline-only)
         """
-        with self._sem:
-            audio_ref = payload.get("audio_url") or payload.get("input")
-            if not audio_ref:
-                return {"task": "speech-to-text", "error": "audio_url (or input) is required"}
+        self._ensure_loaded()
 
-            if isinstance(audio_ref, str):
-                p = Path(audio_ref)
-                parsed = urlparse(audio_ref)
-                if not p.exists() and parsed.scheme not in ("http", "https"):
-                    return {
-                        "task": "speech-to-text",
-                        "error": f"Expected audio file path or URL, got plain text: {audio_ref}",
-                    }
+        # Read audio -> mono float32 @16k
+        samples, sr = _read_audio_from_payload(payload)
 
-            lang = payload.get("language")
-            max_new = int(payload.get("max_new_tokens", 256))
-            max_new = max(8, min(max_new, 1024))
-            tmp_path = Path("tmp_audio.wav")
+        # Controls
+        want_segments = bool(payload.get("return_segments", False))
+        explicit_lang = payload.get("language")
+        task = (payload.get("task") or "").strip().lower()
+        if task not in ("", "transcribe", "translate"):
+            task = "transcribe"
 
-            try:
-                parsed = urlparse(str(audio_ref))
-                if parsed.scheme in ["http", "https"]:
-                    self._download_audio(str(audio_ref), tmp_path)
-                    audio_path = tmp_path
-                else:
-                    audio_path = Path(str(audio_ref))
-                    if not audio_path.exists():
-                        return {"task": "speech-to-text", "error": f"Local file not found: {audio_ref}"}
+        # boolean translate flag overrides task
+        if str(payload.get("translate", "")).lower() in ("1", "true", "yes"):
+            task = "translate"
 
-                mono, sr = self._load_audio_16k_mono(audio_path)
-                model = self._get_model()
+        # Try pipeline first (simple & robust)
+        if _PIPELINE is not None:
+            pipe_kwargs: Dict[str, Any] = {
+                "return_timestamps": "word" if want_segments else False,
+            }
 
-                inputs = self.processor(audio=mono.numpy(), sampling_rate=sr, return_tensors="pt")
-                inputs = {
-                    k: (
-                        v.to(self.dev, dtype=model.dtype)
-                        if torch.is_tensor(v) and v.is_floating_point()
-                        else (v.to(self.dev) if torch.is_tensor(v) else v)
-                    )
-                    for k, v in inputs.items()
+            # chunk/stride controls (optional)
+            cls = payload.get("chunk_length_s")
+            sls = payload.get("stride_length_s")
+            if cls is not None:
+                pipe_kwargs["chunk_length_s"] = float(cls)
+            if sls is not None:
+                pipe_kwargs["stride_length_s"] = float(sls)
+
+            # task & language
+            if explicit_lang:
+                pipe_kwargs["generate_kwargs"] = {
+                    "language": explicit_lang,
+                    "task": task or "transcribe",
                 }
+            elif task:
+                pipe_kwargs["generate_kwargs"] = {"task": task}
 
-                limit = getattr(model.config, "max_target_positions", 448)
+            # Run
+            # Pipeline accepts either file path or numpy array; we pass array
+            import numpy as np
 
-                if lang:
-                    try:
-                        prompt_ids = self.processor.get_decoder_prompt_ids(language=lang, task="transcribe")
-                        prompt_len = len(prompt_ids) if prompt_ids is not None else 0
-                    except Exception:
-                        prompt_len = 0
-                else:
-                    prompt_len = 2
+            audio_np = np.asarray(samples, dtype="float32")
+            out = _PIPELINE(audio_np, **pipe_kwargs)
 
-                allowed_new = max(1, limit - prompt_len)
-                if max_new > allowed_new:
-                    max_new = allowed_new
+            # Standardize output
+            text = out["text"] if isinstance(out, dict) and "text" in out else str(out)
+            language = (
+                out.get("language") if isinstance(out, dict) else explicit_lang or None
+            )
+            result: Dict[str, Any] = {
+                "ok": True,
+                "text": text,
+                "language": language,
+                "sample_rate": sr,
+            }
 
-                if getattr(self.dev, "type", "") == "cuda":
-                    torch.cuda.synchronize()
-                t0 = time.time()
+            # Timestamps/segments (if available)
+            if want_segments:
+                # Some pipeline versions return 'chunks' or 'segments'
+                segs = []
+                if isinstance(out, dict) and "chunks" in out and isinstance(out["chunks"], list):
+                    for ch in out["chunks"]:
+                        segs.append(
+                            {
+                                "text": ch.get("text"),
+                                "timestamp": ch.get("timestamp"),
+                            }
+                        )
+                result["segments"] = segs
 
-                gen_kwargs = {"max_new_tokens": max_new}
-                if lang:
-                    gen_kwargs.update({"language": lang, "task": "transcribe"})
+            return result
 
-                with torch.no_grad():
-                    out_ids = model.generate(**inputs, **gen_kwargs)
+        # Fallback: manual generate() with processor+model
+        from transformers import GenerationConfig
+        import numpy as np
 
-                if getattr(self.dev, "type", "") == "cuda":
-                    torch.cuda.synchronize()
-                elapsed = round(time.time() - t0, 3)
+        audio_np = np.asarray(samples, dtype="float32")
+        inputs = _PROCESSOR.feature_extractor(
+            audio_np, sampling_rate=sr, return_tensors="pt"
+        )
+        input_features = inputs.input_features.to(_MODEL.device)
 
-                text = self.processor.batch_decode(out_ids, skip_special_tokens=True)[0]
+        gen_kwargs = {}
+        if explicit_lang:
+            gen_kwargs["language"] = explicit_lang
+        if task in ("transcribe", "translate"):
+            gen_kwargs["task"] = task
 
-                return {
-                    "task": "speech-to-text",
-                    "device": str(self.dev),
-                    "model": self.model_name,
-                    "language": lang or "auto",
-                    "audio_ref": str(audio_ref),
-                    "text": text,
-                    "elapsed_sec": elapsed,
-                }
+        # Some versions use forced_decoder_ids via processor.get_decoder_prompt_ids
+        try:
+            forced_ids = _PROCESSOR.get_decoder_prompt_ids(
+                language=explicit_lang if explicit_lang else None,
+                task=task if task else "transcribe",
+            )
+            generation_config = GenerationConfig.forced_decoder_ids_for_generation(
+                forced_ids
+            )
+        except Exception:
+            generation_config = None
 
-            except Exception as e:
-                return {
-                    "task": "speech-to-text",
-                    "error": str(e),
-                    "traceback": traceback.format_exc(),
-                }
-            finally:
-                if tmp_path.exists():
-                    tmp_path.unlink()
+        with _MODEL.eval():
+            pred_ids = _MODEL.generate(
+                input_features,
+                generation_config=generation_config,
+                max_new_tokens=_safe_int(payload.get("max_new_tokens", 448), 448),
+                num_beams=_safe_int(payload.get("num_beams", 1), 1),
+            )
+
+        text = _PROCESSOR.tokenizer.batch_decode(pred_ids, skip_special_tokens=True)[0]
+        return {
+            "ok": True,
+            "text": text,
+            "language": explicit_lang,  # language detection not provided in this fallback
+            "sample_rate": sr,
+        }

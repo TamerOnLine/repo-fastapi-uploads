@@ -1,27 +1,8 @@
-# 🔗 Plugins Index
+# Plugins Overview
 
-_Auto-generated. Do not edit manually._
+Total: **2**
 
-
-| Plugin | Provider | Tasks | README | manifest.json | plugin.py |
-|-------:|:---------|:------|:------:|:-------------:|:---------:|
-| **dummy** | dummy | `ping` | [README](../app/plugins/dummy/README.md) | [manifest](../app/plugins/dummy/manifest.json) | [plugin](../app/plugins/dummy/plugin.py) |
-| **neu_server** | neu_server | `summarize, classify` | [README](../app/plugins/neu_server/README.md) | [manifest](../app/plugins/neu_server/manifest.json) | [plugin](../app/plugins/neu_server/plugin.py) |
-| **pdf_reader** | local | `extract_text` | [README](../app/plugins/pdf_reader/README.md) | [manifest](../app/plugins/pdf_reader/manifest.json) | [plugin](../app/plugins/pdf_reader/plugin.py) |
-| **text_tools** | local | `postprocess` | [README](../app/plugins/text_tools/README.md) | [manifest](../app/plugins/text_tools/manifest.json) | [plugin](../app/plugins/text_tools/plugin.py) |
-| **whisper** | whisper | `speech-to-text` | [README](../app/plugins/whisper/README.md) | [manifest](../app/plugins/whisper/manifest.json) | [plugin](../app/plugins/whisper/plugin.py) |
-
-## How to generate
-```bash
-python tools/build_plugins_index.py
-```
-
-## Force-refresh all plugin READMEs
-```bash
-python tools/build_plugins_index.py --force-readme
-```
-
-## Force (re)generate manifest.json files
-```bash
-python tools/build_plugins_index.py --force-manifest
-```
+| Name | Folder | Provider | Tasks | Files |
+|------|--------|----------|-------|-------|
+| dummy | `dummy` | - | ping | [README](app/plugins/dummy/README.md) · [code](app/plugins/dummy/plugin.py) · [manifest](app/plugins/dummy/manifest.json) |
+| whisper | `whisper` | - | transcribe | [README](app/plugins/whisper/README.md) · [code](app/plugins/whisper/plugin.py) · [manifest](app/plugins/whisper/manifest.json) |

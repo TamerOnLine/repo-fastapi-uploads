@@ -1,6 +1,0 @@
-{
-  "name": "neu_server",
-  "provider": "neu_server",
-  "version": "0.1.0",
-  "tasks": ["summarize", "classify"]
-}

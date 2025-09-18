@@ -1,8 +1,17 @@
 {
-  "name": "whisper",
-  "provider": "whisper",
-  "tasks": [
-    "speech-to-text"
+  "code": "app/plugins/whisper/plugin.py",
+  "example_payload": "{}",
+  "folder": "whisper",
+  "kind": "plugin",
+  "models": [
+    {
+      "id": "openai/whisper-small",
+      "type": "hf"
+    }
   ],
-  "version": "0.1.0"
+  "name": "whisper",
+  "provider": null,
+  "tasks": [
+    "transcribe"
+  ]
 }

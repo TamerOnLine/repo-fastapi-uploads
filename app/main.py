@@ -12,22 +12,21 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.base import BaseHTTPMiddleware
 
+from app.api.router_auth import router as auth_router
+from app.api.router_inference import router as inference_router
+from app.api.router_plugins import router as plugins_router
+from app.api.router_services import router as services_router
+from app.api.router_uploads import router as uploads_router
+from app.api.router_workflows import router as workflows_router
+
 from app.core.config import get_settings
 from app.core.errors import register_exception_handlers
 from app.core.logging_ import setup_logging
-from app.routes import plugins as plugins_routes
-from app.routes.workflow import router as workflow_router
 from app.runtime.model_pool import get_model_pool
-from app.routes.uploads import router as uploads_router
 
-
-
-# Import the plugin registry helper from your loader.
-# If it's not present for any reason, we fall back to an empty list.
 try:
     from app.plugins.loader import list_plugins  # returns dict{name: manifest} or list[str]
-except Exception:  # pragma: no cover - safety net
-
+except Exception:  # fallback
     def list_plugins():  # type: ignore
         return {}
 
@@ -37,13 +36,8 @@ logger = logging.getLogger(__name__)
 # ========================
 # Lifespan handler
 # ========================
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """
-    Start a lightweight background sweeper for the model pool during app lifetime.
-    """
     pool = get_model_pool()
 
     async def sweeper():
@@ -63,18 +57,26 @@ async def lifespan(app: FastAPI):
 # ========================
 # Application init
 # ========================
-
 settings = get_settings()
 setup_logging()
 templates = Jinja2Templates(directory=str(settings.TEMPLATES_DIR))
 
-app = FastAPI(title=settings.APP_NAME, lifespan=lifespan)
+app = FastAPI(
+    title=settings.APP_NAME,
+    lifespan=lifespan,
+    version=settings.VERSION,
+    docs_url="/docs",
+    redoc_url=None,
+    swagger_ui_parameters={
+        "defaultModelsExpandDepth": (1 if settings.DOCS_SHOW_SCHEMAS else -1),  # -1 إخفاء
+        "defaultModelExpandDepth": 0,
+        "docExpansion": "none",
+    },
+    )
 
 # Static files
-# app/main.py
 app.mount("/static", StaticFiles(directory=str(settings.STATIC_DIR)), name="static")
 app.mount("/samples", StaticFiles(directory=str(settings.SAMPLES_DIR)), name="samples")
-
 
 # CORS
 app.add_middleware(
@@ -103,8 +105,6 @@ register_exception_handlers(app)
 # ========================
 # Routes
 # ========================
-
-
 @app.get("/", response_class=HTMLResponse)
 def index(request: Request):
     return templates.TemplateResponse("index.html", {"request": request, "title": settings.APP_NAME})
@@ -126,21 +126,20 @@ def favicon():
 
 
 # Routers
-app.include_router(plugins_routes.router, tags=["plugins"])
-app.include_router(workflow_router, prefix="/workflow", tags=["workflow"])
 app.include_router(uploads_router)
+app.include_router(services_router)
+app.include_router(plugins_router)
+app.include_router(workflows_router)
+app.include_router(inference_router)
+app.include_router(auth_router)
+
+
+
 
 # ========================
 # OpenAPI enrichment
 # ========================
-
-
 def _collect_plugins_and_tasks():
-    """
-    Returns (plugin_names, all_tasks) from the loader's registry.
-    - plugin_names: sorted list of plugin ids
-    - all_tasks: sorted list of distinct task names (if manifests declare "tasks")
-    """
     try:
         registry = list_plugins()
     except Exception as e:
@@ -154,13 +153,10 @@ def _collect_plugins_and_tasks():
         plugin_names = list(registry.keys())
         for manifest in registry.values():
             tasks = manifest.get("tasks") if isinstance(manifest, dict) else None
-            if isinstance(tasks, (list | tuple | set)):
+            if isinstance(tasks, (list, tuple, set)):
                 all_tasks_set.update(tasks)
-    elif isinstance(registry, (list | tuple | set)):
+    elif isinstance(registry, (list, tuple, set)):
         plugin_names = list(registry)
-    else:
-        # Unknown type; ignore gracefully
-        pass
 
     plugin_names = sorted(set(plugin_names))
     all_tasks = sorted(all_tasks_set)
@@ -168,11 +164,6 @@ def _collect_plugins_and_tasks():
 
 
 def custom_openapi():
-    """
-    Generate the OpenAPI schema once, then cache it.
-    Additionally, inject enum lists for `plugin` (and optionally `task`)
-    properties across all schemas so Swagger shows real options.
-    """
     if app.openapi_schema:
         return app.openapi_schema
 
@@ -189,12 +180,9 @@ def custom_openapi():
         if components and plugin_names:
             for s in components.values():
                 props = s.get("properties", {})
-                # Inject enum for "plugin"
                 p = props.get("plugin")
                 if isinstance(p, dict) and p.get("type") == "string":
                     p["enum"] = plugin_names
-
-                # (Optional) Inject enum for "task" if you have a global list
                 t = props.get("task")
                 if isinstance(t, dict) and t.get("type") == "string" and all_tasks:
                     t["enum"] = all_tasks
@@ -206,5 +194,4 @@ def custom_openapi():
     return app.openapi_schema
 
 
-# Replace FastAPI's default OpenAPI generator with our custom one
 app.openapi = custom_openapi

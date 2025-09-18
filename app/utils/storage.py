@@ -1,74 +1,111 @@
+# app/utils/storage.py
 from __future__ import annotations
 
-import contextlib
 import re
+import uuid
 from pathlib import Path
-from uuid import uuid4
+from typing import AsyncIterator, Iterable, Iterator, Tuple
 
-from fastapi import HTTPException, UploadFile
+from fastapi import HTTPException, UploadFile, status
 
 
 class LocalStorage:
     """
-    تخزين محلي على القرص مع تحقق أساسي لملفات PDF وحجمها.
+    Simple local disk storage under a base directory with optional subdir.
+    - Prevents path traversal
+    - Validates PDFs by header
+    - Enforces max size (MB)
     """
-    def __init__(self, base_dir: Path, subdir: str = "pdf", max_mb: int = 20):
-        self.base_dir = Path(base_dir)
-        self.subdir = subdir
+
+    def __init__(self, *, base_dir: Path | str, subdir: str = "", max_mb: int = 20):
+        self.base_dir = Path(base_dir).resolve()
+        self.subdir = subdir.strip("/\\")
+        self.root = (self.base_dir / self.subdir).resolve() if self.subdir else self.base_dir
         self.max_bytes = int(max_mb) * 1024 * 1024
+        self.root.mkdir(parents=True, exist_ok=True)
 
-    def _ensure_dir(self) -> Path:
-        target = self.base_dir / self.subdir
-        target.mkdir(parents=True, exist_ok=True)
-        return target
+    # ---------------------------
+    # internal helpers
+    # ---------------------------
+    def _safe_path(self, rel_path: str) -> Path:
+        """Join safely under root and forbid .. traversal."""
+        rel = Path(rel_path)
+        if rel.is_absolute() or any(part in ("..",) for part in rel.parts):
+            raise HTTPException(status_code=400, detail="Invalid relative path")
+        full = (self.root / rel).resolve()
+        if self.root not in full.parents and full != self.root:
+            raise HTTPException(status_code=400, detail="Path escapes storage root")
+        return full
 
-    async def save_pdf(self, upload: UploadFile) -> dict:
-        if not upload or not upload.filename:
-            raise HTTPException(status_code=400, detail="No file uploaded")
+    def _slugify(self, name: str) -> str:
+        base = re.sub(r"[^\w\-.]+", "_", name).strip("._")
+        return base or "file"
 
-        # اسم الملف الأصلي (مع تعقيم)
-        original_name = Path(upload.filename).name
-        safe_name = re.sub(r"[^A-Za-z0-9._-]+", "_", original_name) or "file.pdf"
+    # ---------------------------
+    # public API
+    # ---------------------------
+    async def save_pdf(self, file: UploadFile) -> dict:
+        """Save a PDF UploadFile -> returns metadata dict."""
+        data = await file.read()
+        size = len(data)
 
-        # تحقق سريع من ترويسة PDF بدون تحميل الملف كاملًا في الذاكرة
-        head = upload.file.read(5)
-        upload.file.seek(0)
-        if head != b"%PDF-":
-            raise HTTPException(status_code=400, detail="Invalid PDF (missing %PDF- header).")
+        if size == 0:
+            raise HTTPException(status_code=400, detail="Empty file")
 
-        # كتابة على القرص بتدفق (chunks) + فحص الحجم
-        dest_dir = self._ensure_dir()
-        dest = dest_dir / f"{uuid4().hex}_{safe_name}"
+        if size > self.max_bytes:
+            raise HTTPException(
+                status_code=413,
+                detail=f"File too large (>{self.max_bytes // (1024*1024)} MB)",
+            )
 
-        total = 0
-        CHUNK = 1024 * 1024  # 1MB
-        try:
-            with dest.open("wb") as out:
-                while True:
-                    chunk = upload.file.read(CHUNK)
-                    if not chunk:
-                        break
-                    out.write(chunk)
-                    total += len(chunk)
-                    if total > self.max_bytes:
-                        raise HTTPException(
-                            status_code=413,
-                            detail=f"File too large (> {self.max_bytes // (1024*1024)} MB).",
-                        )
-        except HTTPException:
-            with contextlib.suppress(Exception):
-                dest.unlink(missing_ok=True)
-            raise
-        finally:
-            with contextlib.suppress(Exception):
-                upload.file.close()
+        # quick magic header check
+        if not data.startswith(b"%PDF"):
+            raise HTTPException(status_code=400, detail="Not a valid PDF (missing %PDF header)")
 
-        # relative path مفيد للتعامل لاحقًا
-        rel_path = str(Path(self.subdir) / dest.name)
+        # filename
+        orig = file.filename or "upload.pdf"
+        stem = self._slugify(Path(orig).stem)
+        ext = ".pdf"
+        fname = f"{stem}-{uuid.uuid4().hex[:8]}{ext}"
+
+        path = self._safe_path(fname)
+        path.write_bytes(data)
+
+        rel_path = path.relative_to(self.base_dir).as_posix()
         return {
-            "filename": safe_name,
-            "stored_as": dest.name,
-            "path": str(dest),
-            "rel_path": rel_path,
-            "size_bytes": total,
+            "ok": True,
+            "filename": fname,
+            "rel_path": rel_path,         # relative to base_dir
+            "size_bytes": size,
+            "url_hint": f"/static/{self.subdir}/{fname}" if self.subdir else f"/static/{fname}",
         }
+
+    def iter_files(self) -> Iterator[Tuple[str, int]]:
+        """
+        Yield (rel_path, size_bytes) for files under root (PDFs only).
+        Used by /uploads listing endpoints.
+        """
+        for p in self.root.rglob("*.pdf"):
+            if p.is_file():
+                rel = p.relative_to(self.base_dir).as_posix()
+                try:
+                    size = p.stat().st_size
+                except Exception:
+                    size = 0
+                yield (rel, size)
+
+    def exists(self, rel_path: str) -> bool:
+        return self._safe_path(rel_path).exists()
+
+    def delete(self, rel_path: str) -> bool:
+        p = self._safe_path(rel_path)
+        if p.exists():
+            p.unlink()
+            return True
+        return False
+
+    def read_bytes(self, rel_path: str) -> bytes:
+        p = self._safe_path(rel_path)
+        if not p.exists():
+            raise HTTPException(status_code=404, detail="File not found")
+        return p.read_bytes()

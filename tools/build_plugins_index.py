@@ -1,17 +1,33 @@
 #!/usr/bin/env python3
 """
-Generate docs/plugins-overview.md from plugins metadata and ensure per-plugin README.md files
-and manifest.json (optional).
+Build docs for plugins & services, and ensure per-item README.md + manifest.json.
 
-- Scans app/plugins/* for README.md, manifest.json, and plugin.py (tasks = [...]).
-- Auto-creates README.md for any plugin missing it (or refreshes all with --force-readme).
-- Auto-creates/updates manifest.json when requested (use --force-manifest to overwrite).
-- Idempotent; safe to run anytime.
+- Sources:
+    * Plugins  -> app/plugins/<name>/plugin.py   (class Plugin)
+    * Services -> app/services/<name>/service.py (class Service)
+                  (fallback: plugin.py with class Plugin)
 
-Usage:
-    python tools/build_plugins_index.py
-    python tools/build_plugins_index.py --force-readme
-    python tools/build_plugins_index.py --force-manifest --force-readme
+- Extracted via AST (if present on the class):
+    * tasks: list[str]
+    * REQUIRED_MODELS: list[ {repo/model keys...} ]
+    * EXAMPLE_PAYLOAD: str (JSON-like)
+    * provider: str
+    * class docstring -> used as description
+
+- Outputs:
+    * docs/plugins-overview.md
+    * docs/services-overview.md
+    * docs/plugins/<name>/README.md          (plugins)
+    * app/services/<name>/README.md          (services)  <-- as requested
+    * app/plugins/<name>/manifest.json       (if --force-manifest / --update-all)
+    * app/services/<name>/manifest.json      (if --force-manifest / --update-all)
+
+Flags:
+    --force-readme     Regenerate README for all items (overwrite)
+    --force-manifest   Create/overwrite manifest.json for all items
+    --update-all       Shorthand for both flags
+    --only             Limit to 'plugins' or 'services'
+    --verbose          Print per-item actions
 """
 
 from __future__ import annotations
@@ -20,114 +36,31 @@ import argparse
 import ast
 import json
 import locale
-import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any, Literal
 
+# ---------------------------
 # Paths
+# ---------------------------
 ROOT = Path(__file__).resolve().parents[1]  # project root
 PLUGINS_DIR = ROOT / "app" / "plugins"
+SERVICES_DIR = ROOT / "app" / "services"
 OUT_DIR = ROOT / "docs"
-OUT_MD = OUT_DIR / "plugins-overview.md"
-DOCS_PLUGINS_DIR = OUT_DIR / "plugins"
-
-# For legacy regex extraction if needed (kept for backward compatibility)
-TASKS_RE = re.compile(r"^\s*tasks\s*=\s*\[([^\]]*)\]", re.MULTILINE)
-LIST_ITEM_RE = re.compile(r"['\"]([^'\"]+)['\"]")
+OUT_PLUGINS_DIR = OUT_DIR / "plugins"
+OUT_SERVICES_DIR = OUT_DIR / "services"
+OUT_PLUGINS_MD = OUT_DIR / "plugins-overview.md"
+OUT_SERVICES_MD = OUT_DIR / "services-overview.md"
 
 # ---------------------------
-# README template
+# stdout unicode helpers
 # ---------------------------
-README_TEMPLATE = """# {name}
-
-**Provider:** {provider}
-**Tasks:** {tasks_fmt}
-
-## Description
-Short description of what this plugin does and when to use it.
-
-## Installation
-- No extra dependencies beyond the project’s standard requirements, unless noted here.
-- If this plugin needs additional models, weights, or external assets, list them here.
-
-## Usage
-
-### API Overview
-- `GET /plugins` — lists all available plugins.
-- `GET /plugins/{{name}}` — returns metadata for this plugin.
-- `POST /plugins/{{name}}/{{task}}` — runs a task of this plugin.
-
-> Replace `{{name}}` with this plugin’s folder name and `{{task}}` with one of the tasks listed above.
-
-### cURL Example
-```bash
-curl -X POST "http://localhost:8000/plugins/{folder}/{example_task}" \\
-     -H "Content-Type: application/json" \\
-     -d '{example_payload_curl}'
-```
-
-### Python Example
-```python
-import requests
-
-resp = requests.post(
-    "http://localhost:8000/plugins/{folder}/{example_task}",
-    json={example_payload_py},
-    timeout=60,
-)
-print(resp.json())
-```
-
-## Notes
-- If the plugin requires environment variables (e.g., HF_HOME, TORCH_HOME, TRANSFORMERS_OFFLINE), document them here.
-- Add relevant reference links (model cards, docs) if applicable.
-"""
-
-@dataclass
-class PluginMeta:
-    folder: str
-    name: str
-    provider: str
-    tasks: list[str]
-    readme_rel: str | None
-    manifest_rel: str | None
-    plugin_rel: str | None
-    example_payload_curl: str | None = None
-    example_payload_py: str | None = None
-
-def write_if_changed(path: Path, content: str, encoding: str = "utf-8") -> bool:
-    """Write text file only if content changed. Returns True if written."""
-    old = None
-    if path.exists():
-        try:
-            old = path.read_text(encoding=encoding)
-        except Exception:
-            old = None
-    if old == content:
-        return False
-    path.write_text(content, encoding=encoding)
-    return True
-
-def write_json_if_changed(path: Path, data: dict, *, indent: int = 2) -> bool:
-    """Write JSON file only if content changed. Returns True if written."""
-    new = json.dumps(data, ensure_ascii=False, indent=indent, sort_keys=True)
-    if path.exists():
-        try:
-            old = path.read_text(encoding="utf-8")
-            if old.strip() == new.strip():
-                return False
-        except Exception:
-            pass
-    path.write_text(new + "\n", encoding="utf-8")
-    return True
-
 def _supports_utf8() -> bool:
     enc = (getattr(sys.stdout, "encoding", None) or "") or locale.getpreferredencoding(False) or ""
     enc_up = enc.upper()
     return "UTF-8" in enc_up or "UTF8" in enc_up
 
-# Try to force UTF-8; if not possible, we’ll still have fallbacks.
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")  # Python ≥3.7
 except Exception:
@@ -136,331 +69,413 @@ except Exception:
 OK = "✅" if _supports_utf8() else "[OK]"
 DOC = "📄" if _supports_utf8() else "[DOC]"
 UPD = "📝" if _supports_utf8() else "[UPD]"
-
-def read_tasks_from_plugin_ast(py_file: Path) -> list[str]:
-    """
-    Extract tasks via AST from plugin.py:
-
-    class Plugin(AIPlugin):
-        tasks = ["a", "b"]
-    """
-    try:
-        tree = ast.parse(py_file.read_text(encoding="utf-8"))
-        for node in tree.body:
-            if isinstance(node, ast.ClassDef) and node.name == "Plugin":
-                for stmt in node.body:
-                    if isinstance(stmt, ast.Assign):
-                        if any(isinstance(t, ast.Name) and t.id == "tasks" for t in stmt.targets):
-                            if isinstance(stmt.value, (ast.List, ast.Tuple)):
-                                vals: list[str] = []
-                                for elt in stmt.value.elts:
-                                    if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
-                                        vals.append(elt.value)
-                                return vals
-        return []
-    except Exception:
-        return []
-
-def read_tasks_from_plugin_regex(py_file: Path) -> list[str]:
-    """Fallback: extract tasks list using regex."""
-    try:
-        text = py_file.read_text(encoding="utf-8", errors="ignore")
-        match = TASKS_RE.search(text)
-        if not match:
-            return []
-        inside = match.group(1)
-        return [task.strip() for task in LIST_ITEM_RE.findall(inside)]
-    except Exception:
-        return []
-
-def read_manifest(manifest_file: Path) -> dict:
-    try:
-        return json.loads(manifest_file.read_text(encoding="utf-8"))
-    except Exception:
-        return {}
+ERR = "❌" if _supports_utf8() else "[ERR]"
 
 # ---------------------------
-# Examples (per plugin)
-# - Can also be provided via manifest.json as "example_payload"
+# Data models
 # ---------------------------
-DEFAULT_PAYLOAD_CURL = '{"input":"example"}'
-DEFAULT_PAYLOAD_PY = "{'input': 'example'}"
+@dataclass
+class ItemMeta:
+    kind: Literal["plugin", "service"]
+    folder: str
+    class_name: str                  # "Plugin" or "Service"
+    base_dir: Path                   # PLUGINS_DIR or SERVICES_DIR
+    code_file: Path                  # plugin.py or service.py
+    manifest_file: Path              # app/.../manifest.json
+    readme_file: Path                # docs/.../<name>/README.md (plugins) | app/services/<name>/README.md
+    name: str                        # display name (defaults to folder)
+    provider: str | None
+    tasks: list[str]
+    description: str
+    models: list[dict] | None
+    example_payload: str | None
 
-EXAMPLE_PAYLOADS: dict[str, dict[str, str]] = {
-    # pdf_reader expects a rel_path under UPLOAD_DIR
-    "pdf_reader": {
-        "curl": '{"rel_path":"pdf/<uuid>_file.pdf","return_text": true}',
-        "py":   "{'rel_path': 'pdf/<uuid>_file.pdf', 'return_text': True}",
-    },
-}
+# ---------------------------
+# IO helpers
+# ---------------------------
+def ensure_dir(p: Path) -> None:
+    p.mkdir(parents=True, exist_ok=True)
 
-def _escape_for_format(s: str) -> str:
-    """Escape braces so str.format won't treat them as placeholders inside README_TEMPLATE.format."""
-    return s.replace("{", "{{").replace("}", "}}")
+def write_if_changed(path: Path, content: str, encoding: str = "utf-8") -> bool:
+    old = None
+    if path.exists():
+        try:
+            old = path.read_text(encoding=encoding)
+        except Exception:
+            old = None
+    if old == content:
+        return False
+    ensure_dir(path.parent)
+    path.write_text(content, encoding=encoding)
+    return True
 
-def _example_payloads_for(folder: str, manifest: dict) -> tuple[str, str]:
-    """
-    Get (curl_example, py_example) for a plugin.
-    Priority:
-      1) manifest["example_payload"] (string) → used for both, with JSON→Py fix
-      2) EXAMPLE_PAYLOADS[folder]
-      3) defaults
-    """
-    # 1) From manifest (single JSON string)
-    m_ex = manifest.get("example_payload")
-    if isinstance(m_ex, str) and m_ex.strip():
-        curl_ex = m_ex.strip()
-        # naive JSON->Python literal tweaks (true/false/null and quotes)
-        py_ex = (
-            curl_ex
-            .replace(" true", " True")
-            .replace(": true", ": True")
-            .replace(" false", " False")
-            .replace(": false", ": False")
-            .replace(" null", " None")
-            .replace(": null", ": None")
-            .replace('": "', "': '")
-            .replace('", "', "', '")
-            .replace('{"', "{'")
-            .replace('"}', "'}")
-        )
-        return curl_ex, py_ex
+def write_json_if_changed(path: Path, data: dict, *, indent: int = 2) -> bool:
+    new = json.dumps(data, ensure_ascii=False, indent=indent, sort_keys=True)
+    if path.exists():
+        try:
+            old = path.read_text(encoding="utf-8")
+            if old.strip() == new.strip():
+                return False
+        except Exception:
+            pass
+    ensure_dir(path.parent)
+    path.write_text(new + "\n", encoding="utf-8")
+    return True
 
-    # 2) From hardcoded dict
-    ex = EXAMPLE_PAYLOADS.get(folder)
-    if ex:
-        return ex.get("curl", DEFAULT_PAYLOAD_CURL), ex.get("py", DEFAULT_PAYLOAD_PY)
+# ---------------------------
+# AST readers
+# ---------------------------
+def _parse_ast(py_file: Path) -> ast.AST | None:
+    try:
+        return ast.parse(py_file.read_text(encoding="utf-8"))
+    except Exception:
+        return None
 
-    # 3) Defaults
-    return DEFAULT_PAYLOAD_CURL, DEFAULT_PAYLOAD_PY
+def _find_class(tree: ast.AST | None, class_name: str) -> ast.ClassDef | None:
+    if not tree:
+        return None
+    for node in getattr(tree, "body", []):
+        if isinstance(node, ast.ClassDef) and node.name == class_name:
+            return node
+    return None
 
-def collect_plugins() -> list[PluginMeta]:
-    plugins: list[PluginMeta] = []
-    if not PLUGINS_DIR.exists():
-        return plugins
+def _read_class_attr_list_of_str(cls: ast.ClassDef, attr: str) -> list[str]:
+    for stmt in cls.body:
+        if isinstance(stmt, ast.Assign):
+            if any(isinstance(t, ast.Name) and t.id == attr for t in stmt.targets):
+                if isinstance(stmt.value, (ast.List, ast.Tuple)):
+                    vals: list[str] = []
+                    for elt in stmt.value.elts:
+                        if isinstance(elt, ast.Constant) and isinstance(elt.value, str):
+                            vals.append(elt.value)
+                    return vals
+    return []
 
-    candidates = [
-        p for p in PLUGINS_DIR.iterdir() if p.is_dir() and not p.name.startswith(".") and p.name != "__pycache__"
-    ]
+def _read_class_attr_list_of_dict(cls: ast.ClassDef, attr: str) -> list[dict]:
+    for stmt in cls.body:
+        if isinstance(stmt, ast.Assign):
+            if any(isinstance(t, ast.Name) and t.id == attr for t in stmt.targets):
+                if isinstance(stmt.value, (ast.List, ast.Tuple)):
+                    items: list[dict] = []
+                    for elt in stmt.value.elts:
+                        if isinstance(elt, ast.Dict):
+                            d: dict[str, Any] = {}
+                            for k, v in zip(elt.keys, elt.values):
+                                if isinstance(k, ast.Constant) and isinstance(k.value, str):
+                                    if isinstance(v, ast.Constant):
+                                        d[k.value] = v.value
+                            if d:
+                                items.append(d)
+                    return items
+    return []
 
-    for pdir in sorted(candidates, key=lambda p: p.name.lower()):
-        readme = pdir / "README.md"
-        manifest = pdir / "manifest.json"
-        plug_py = pdir / "plugin.py"
+def _read_class_attr_str(cls: ast.ClassDef, attr: str) -> str | None:
+    for stmt in cls.body:
+        if isinstance(stmt, ast.Assign):
+            if any(isinstance(t, ast.Name) and t.id == attr for t in stmt.targets):
+                if isinstance(stmt.value, ast.Constant) and isinstance(stmt.value.value, str):
+                    return stmt.value.value.strip()
+    return None
 
-        # consider it a plugin only if plugin.py or manifest.json exists
-        if not (plug_py.exists() or manifest.exists()):
+def _read_docstring(cls: ast.ClassDef | None) -> str:
+    if not cls:
+        return ""
+    return (ast.get_docstring(cls) or "").strip()
+
+# ---------------------------
+# Path helpers
+# ---------------------------
+def _readme_path_for(kind: str, base_dir: Path, out_dir: Path, folder: str) -> Path:
+    if kind == "plugin":
+        return base_dir / folder / "README.md"
+    return base_dir / folder / "README.md"
+
+
+# ---------------------------
+# Collectors
+# ---------------------------
+def discover_items(kind: Literal["plugin", "service"]) -> list[ItemMeta]:
+    if kind == "plugin":
+        base = PLUGINS_DIR
+        class_name_preferred = "Plugin"
+        candidates = ["plugin.py"]  # plugins must have plugin.py
+        out_dir = OUT_PLUGINS_DIR
+    else:
+        base = SERVICES_DIR
+        class_name_preferred = "Service"
+        # accept service.py (preferred) OR plugin.py (fallback) for services
+        candidates = ["service.py", "plugin.py"]
+        out_dir = OUT_SERVICES_DIR
+
+    items: list[ItemMeta] = []
+    if not base.exists():
+        return items
+
+    for d in sorted(p for p in base.iterdir() if p.is_dir()):
+        code_file = None
+        for fname in candidates:
+            f = d / fname
+            if f.exists():
+                code_file = f
+                break
+        if not code_file:
             continue
 
-        m = read_manifest(manifest) if manifest.exists() else {}
+        tree = _parse_ast(code_file)
+        # For services: prefer class Service, fallback to Plugin
+        cls = _find_class(tree, class_name_preferred) or _find_class(tree, "Plugin")
 
-        name = m.get("name") or pdir.name
-        provider = m.get("provider", "") or ""
-        tasks: list[str] = []
+        tasks = _read_class_attr_list_of_str(cls, "tasks") if cls else []
+        models = _read_class_attr_list_of_dict(cls, "REQUIRED_MODELS") if cls else []
+        example_payload = _read_class_attr_str(cls, "EXAMPLE_PAYLOAD") if cls else None
+        provider = _read_class_attr_str(cls, "provider") if cls else None
+        description = _read_docstring(cls)
 
-        # prefer tasks from manifest
-        if isinstance(m.get("tasks"), list):
-            tasks = [str(x) for x in m["tasks"] if isinstance(x, (str, int, float))]
-            tasks = [str(t).strip() for t in tasks if str(t).strip()]
+        name = d.name  # default
+        maybe_name = _read_class_attr_str(cls, "name") if cls else None
+        if maybe_name:
+            name = maybe_name
 
-        # otherwise try plugin.py via AST then regex
-        if not tasks and plug_py.exists():
-            tasks = read_tasks_from_plugin_ast(plug_py) or read_tasks_from_plugin_regex(plug_py)
+        manifest_file = d / "manifest.json"
+        readme_file = _readme_path_for(kind, base, out_dir, d.name)
 
-        curl_ex, py_ex = _example_payloads_for(pdir.name, m)
-
-        plugins.append(
-            PluginMeta(
-                folder=pdir.name,
+        items.append(
+            ItemMeta(
+                kind=kind,
+                folder=d.name,
+                class_name=class_name_preferred,
+                base_dir=base,
+                code_file=code_file,
+                manifest_file=manifest_file,
+                readme_file=readme_file,
                 name=name,
                 provider=provider,
                 tasks=tasks,
-                readme_rel=readme.relative_to(ROOT).as_posix() if readme.exists() else None,
-                manifest_rel=manifest.relative_to(ROOT).as_posix() if manifest.exists() else None,
-                plugin_rel=plug_py.relative_to(ROOT).as_posix() if plug_py.exists() else None,
-                example_payload_curl=curl_ex,
-                example_payload_py=py_ex,
+                description=description,
+                models=models or None,
+                example_payload=example_payload,
             )
         )
+    return items
 
-    return plugins
+# ---------------------------
+# Rendering
+# ---------------------------
+README_TEMPLATE = """# {name}
 
-def ensure_manifest(meta: PluginMeta, *, force: bool = False) -> bool:
-    """
-    Create/update app/plugins/<folder>/manifest.json
-    - name/provider/version/tasks
-    - example_payload (from EXAMPLE_PAYLOADS if not present)
-    Returns True if the file was created/updated.
-    """
-    plug_dir = ROOT / "app" / "plugins" / meta.folder
-    man_path = plug_dir / "manifest.json"
+**Type:** {kind}
+**Provider:** {provider}
+**Tasks:** {tasks_fmt}
 
-    # read current if exists
-    current: dict = {}
-    if man_path.exists():
-        try:
-            current = json.loads(man_path.read_text(encoding="utf-8"))
-        except Exception:
-            current = {}
+{description}
 
-    # tasks: prefer existing when not forcing; else use meta.tasks
-    tasks: list[str] = []
-    if isinstance(current.get("tasks"), list) and not force:
-        tasks = [str(t).strip() for t in current["tasks"] if str(t).strip()]
-    if not tasks:
-        tasks = list(meta.tasks) if meta.tasks else []
+## Models
+{models_block}
 
-    # basic fields
-    name = current.get("name") if (current.get("name") and not force) else (meta.name or meta.folder)
-    provider = current.get("provider") if (current.get("provider") and not force) else "local"
-    version = current.get("version") if (current.get("version") and not force) else "0.1.0"
+## Usage
 
-    # example payload: keep existing, else from EXAMPLE_PAYLOADS
-    example_payload = current.get("example_payload")
-    if not example_payload:
-        ex = EXAMPLE_PAYLOADS.get(meta.folder)
-        if ex and isinstance(ex.get("curl"), str):
-            example_payload = ex["curl"]
+### API Overview
+- `GET /{base}` — list all available {kind_plural}.
+- `GET /{base}/{{name}}` — get metadata for this {kind}.
+- `POST /{base}/{{name}}/{{task}}` — run a task of this {kind}.
 
-    new_manifest = {
-        "name": name,
-        "provider": provider,
-        "version": version,
-        "tasks": tasks,
-    }
-    if example_payload:
-        new_manifest["example_payload"] = example_payload
+> Replace `{{name}}` with this {kind}'s folder name and `{{task}}` with one of the tasks listed above.
 
-    # short-circuit if unchanged and not forcing
-    if man_path.exists() and not force:
-        base_cmp_keys = ["name", "provider", "version", "tasks", "example_payload"]
-        same = all(current.get(k) == new_manifest.get(k) for k in base_cmp_keys)
-        if same:
-            return False
+### cURL Example
+```bash
+curl -X POST "http://localhost:8000/{base}/{folder}/{example_task}" \
+     -H "Content-Type: application/json" \
+     -d '{example_payload_curl}'
+```
 
-    return write_json_if_changed(man_path, new_manifest)
+### Python Example
+```python
+import requests
 
-def render_readme(meta: PluginMeta) -> str:
-    tasks_fmt = ", ".join(meta.tasks) if meta.tasks else "—"
-    example_task = meta.tasks[0] if meta.tasks else "your-task"
-    # escape braces inside the payloads so .format won't break them
-    example_payload_curl = _escape_for_format(meta.example_payload_curl or DEFAULT_PAYLOAD_CURL)
-    example_payload_py = _escape_for_format(meta.example_payload_py or DEFAULT_PAYLOAD_PY)
-    return (
-        README_TEMPLATE.format(
-            name=meta.name,
-            provider=meta.provider or "—",
-            tasks_fmt=tasks_fmt,
-            folder=meta.folder,
-            example_task=example_task,
-            example_payload_curl=example_payload_curl,
-            example_payload_py=example_payload_py,
-        ).rstrip()
-        + "\n"
-    )
+resp = requests.post(
+    "http://localhost:8000/{base}/{folder}/{example_task}",
+    json={example_payload_py},
+    timeout=60,
+)
+print(resp.json())
+```
 
-def ensure_readme(meta: PluginMeta, force: bool = False) -> bool:
-    """
-    Create README.md if missing, or refresh it when --force-readme is set.
-    Returns True if the file was created/updated.
-    """
-    readme_path = ROOT / "app" / "plugins" / meta.folder / "README.md"
-    if readme_path.exists() and not force:
-        return False
-    content = render_readme(meta)
-    return write_if_changed(readme_path, content, encoding="utf-8")
+## Notes
+- If this {kind} requires environment variables (e.g., HF_HOME, TORCH_HOME, TRANSFORMERS_OFFLINE), document them here.
+- Add relevant reference links (model cards, docs) if applicable.
+"""
 
-def render_markdown(plugins: list[PluginMeta]) -> str:
-    lines = [
-        "# 🔗 Plugins Index\n",
-        "_Auto-generated. Do not edit manually._\n",
-        "",
-        "| Plugin | Provider | Tasks | README | manifest.json | plugin.py |",
-        "|-------:|:---------|:------|:------:|:-------------:|:---------:|",
-    ]
-
-    for meta in plugins:
-        tasks = ", ".join(meta.tasks) if meta.tasks else "—"
-        readme_link = f"[README](../{meta.readme_rel})" if meta.readme_rel else "—"
-        manifest_link = f"[manifest](../{meta.manifest_rel})" if meta.manifest_rel else "—"
-        plugin_link = f"[plugin](../{meta.plugin_rel})" if meta.plugin_rel else "—"
-
-        lines.append(
-            f"| **{meta.name}** | {meta.provider or '—'} | `{tasks}` | "
-            f"{readme_link} | {manifest_link} | {plugin_link} |"
-        )
-
-    lines += [
-        "",
-        "## How to generate",
-        "```bash",
-        "python tools/build_plugins_index.py",
-        "```",
-        "",
-        "## Force-refresh all plugin READMEs",
-        "```bash",
-        "python tools/build_plugins_index.py --force-readme",
-        "```",
-        "",
-        "## Force (re)generate manifest.json files",
-        "```bash",
-        "python tools/build_plugins_index.py --force-manifest",
-        "```",
-        "",
-    ]
-
+def format_models_block(models: list[dict] | None) -> str:
+    if not models:
+        return "- _None_"
+    lines: list[str] = []
+    for m in models:
+        repo = m.get("repo") or m.get("repo_id") or m.get("model") or ""
+        if isinstance(repo, str) and "/" in repo:
+            lines.append(f"- [{repo}](https://huggingface.co/{repo})")
+        else:
+            safe = json.dumps(m, ensure_ascii=False)
+            lines.append(f"- {safe}")
     return "\n".join(lines)
 
+def render_readme(it: ItemMeta) -> str:
+    base = "plugins" if it.kind == "plugin" else "services"
+    kind_plural = "plugins" if it.kind == "plugin" else "services"
+    tasks_fmt = ", ".join(it.tasks) if it.tasks else "_infer_"
+    example_task = it.tasks[0] if it.tasks else "infer"
+
+    if it.example_payload:
+        try:
+            parsed = json.loads(it.example_payload)
+            example_payload_curl = json.dumps(parsed, ensure_ascii=False)
+            example_payload_py = example_payload_curl
+        except Exception:
+            example_payload_curl = it.example_payload.replace("\n", " ")
+            example_payload_py = example_payload_curl
+    else:
+        example_payload_curl = "{}"
+        example_payload_py = "{}"
+
+    return README_TEMPLATE.format(
+        name=it.name or it.folder,
+        kind=it.kind,
+        provider=it.provider or "_unknown_",
+        tasks_fmt=tasks_fmt,
+        description=it.description or "",
+        models_block=format_models_block(it.models),
+        base=base,
+        kind_plural=kind_plural,
+        folder=it.folder,
+        example_task=example_task,
+        example_payload_curl=example_payload_curl,
+        example_payload_py=example_payload_py,
+    )
+
+def render_overview_md(kind: Literal["plugin", "service"], items: list[ItemMeta]) -> str:
+    title = "Plugins Overview" if kind == "plugin" else "Services Overview"
+    hdr = f"# {title}\n\nTotal: **{len(items)}**\n\n"
+    hdr += "| Name | Folder | Provider | Tasks | Files |\n"
+    hdr += "|------|--------|----------|-------|-------|\n"
+    lines: list[str] = []
+    for it in items:
+        tasks_fmt = ", ".join(it.tasks) if it.tasks else "_infer_"
+        # README may live under docs/ (plugins) OR app/services (services) -> always make link relative to ROOT
+        readme_rel = it.readme_file.relative_to(ROOT).as_posix()
+        code_rel = it.code_file.relative_to(ROOT).as_posix()
+        manifest_rel = it.manifest_file.relative_to(ROOT).as_posix()
+        files_links = f"[README]({readme_rel}) · [code]({code_rel}) · [manifest]({manifest_rel})"
+        lines.append(f"| {it.name} | `{it.folder}` | {it.provider or '-'} | {tasks_fmt} | {files_links} |")
+    return hdr + "\n".join(lines) + "\n"
+
+# ---------------------------
+# Writers
+# ---------------------------
+def write_readmes(items: list[ItemMeta], *, force: bool, verbose: bool) -> tuple[int, int]:
+    created = 0
+    updated = 0
+    for it in items:
+        content = render_readme(it)
+        existed = it.readme_file.exists()
+        if write_if_changed(it.readme_file, content):
+            if existed:
+                updated += 1
+                if verbose:
+                    print(f"{UPD} Updated README: {it.readme_file}")
+            else:
+                created += 1
+                if verbose:
+                    print(f"{DOC} Created README: {it.readme_file}")
+        elif force and existed:
+            if verbose:
+                print(f"{OK} README unchanged: {it.readme_file}")
+    return created, updated
+
+def write_manifests(items: list[ItemMeta], *, force: bool, verbose: bool) -> int:
+    changed = 0
+    for it in items:
+        data = {
+            "name": it.name or it.folder,
+            "provider": it.provider,
+            "tasks": it.tasks or ["infer"],
+            "models": it.models or [],
+            "example_payload": it.example_payload or "{}",
+            "kind": it.kind,
+            "folder": it.folder,
+            "code": it.code_file.relative_to(ROOT).as_posix(),
+        }
+        if force or not it.manifest_file.exists():
+            if write_json_if_changed(it.manifest_file, data):
+                changed += 1
+                if verbose:
+                    print(f"{UPD} Wrote manifest: {it.manifest_file}")
+        else:
+            if write_json_if_changed(it.manifest_file, data):
+                changed += 1
+                if verbose:
+                    print(f"{UPD} Updated manifest: {it.manifest_file}")
+    return changed
+
+# ---------------------------
+# Main
+# ---------------------------
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Build plugins index and auto-generate per-plugin README and manifest.")
-    parser.add_argument(
-        "--force-readme",
-        action="store_true",
-        help="Regenerate README.md for all plugins even if they already exist.",
-    )
-    parser.add_argument(
-        "--force-manifest",
-        action="store_true",
-        help="(Re)generate manifest.json for all plugins (overwrite common fields).",
-    )
+    parser = argparse.ArgumentParser(description="Build index/docs for plugins & services.")
+    parser.add_argument("--force-readme", action="store_true", help="Regenerate README.md for all items.")
+    parser.add_argument("--force-manifest", action="store_true", help="Create/overwrite manifest.json for all items.")
+    parser.add_argument("--update-all", action="store_true", help="Shortcut for --force-readme + --force-manifest")
+    parser.add_argument("--only", choices=["plugins", "services"], help="Limit to a single source type.")
+    parser.add_argument("--verbose", action="store_true", help="Verbose output.")
     args = parser.parse_args(argv)
 
-    plugins = collect_plugins()
+    if args.update_all:
+        args.force_readme = True
+        args.force_manifest = True
 
-    # Create/refresh per-plugin manifest and README files
-    created_readme = 0
-    updated_readme = 0
-    changed_manifest = 0
+    # Prepare output dirs for plugins/docs and services/docs (overview pages)
+    ensure_dir(OUT_PLUGINS_DIR)
+    ensure_dir(OUT_SERVICES_DIR)
 
-    for meta in plugins:
-        # manifest first (so README can reference example_payload if manifest sets it)
-        if ensure_manifest(meta, force=args.force_manifest):
-            changed_manifest += 1
+    items_plugins: list[ItemMeta] = []
+    items_services: list[ItemMeta] = []
 
-        changed = ensure_readme(meta, force=args.force_readme)
-        if changed:
-            if args.force_readme:
-                updated_readme += 1
-            else:
-                created_readme += 1
+    if args.only in (None, "plugins"):
+        items_plugins = discover_items("plugin")
+    if args.only in (None, "services"):
+        items_services = discover_items("service")
 
-    # Re-collect to capture new README/manifest paths for the index table
-    plugins = collect_plugins()
+    cr_p, up_p = (0, 0)
+    cr_s, up_s = (0, 0)
+    if args.only in (None, "plugins"):
+        cr_p, up_p = write_readmes(items_plugins, force=args.force_readme, verbose=args.verbose)
+    if args.only in (None, "services"):
+        cr_s, up_s = write_readmes(items_services, force=args.force_readme, verbose=args.verbose)
 
-    # Write overview
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
-    DOCS_PLUGINS_DIR.mkdir(parents=True, exist_ok=True)
-    OUT_MD.write_text(render_markdown(plugins), encoding="utf-8")
+    changed_over_p = write_if_changed(OUT_PLUGINS_MD, render_overview_md("plugin", items_plugins))
+    changed_over_s = write_if_changed(OUT_SERVICES_MD, render_overview_md("service", items_services))
 
-    print(f"{OK} Wrote {OUT_MD.relative_to(ROOT)} ({len(plugins)} plugins)")
-    if created_readme:
-        print(f"{DOC} Created {created_readme} README file(s)")
-    if updated_readme:
-        print(f"{UPD} Updated {updated_readme} README file(s)")
-    if changed_manifest:
-        print(f"{UPD} Created/Updated {changed_manifest} manifest.json file(s)")
+    man_p = man_s = 0
+    if args.force_manifest:
+        if args.only in (None, "plugins"):
+            man_p = write_manifests(items_plugins, force=True, verbose=args.verbose)
+        if args.only in (None, "services"):
+            man_s = write_manifests(items_services, force=True, verbose=args.verbose)
+    else:
+        if args.only in (None, "plugins"):
+            man_p = write_manifests(items_plugins, force=False, verbose=args.verbose)
+        if args.only in (None, "services"):
+            man_s = write_manifests(items_services, force=False, verbose=args.verbose)
+
+    total_items = len(items_plugins) + len(items_services)
+    print(f"{OK} Indexed {total_items} item(s): {len(items_plugins)} plugin(s), {len(items_services)} service(s).")
+    print(f"{DOC} READMEs  -> created {cr_p+cr_s}, updated {up_p+up_s}.")
+    print(f"{DOC} Overviews-> plugins({ 'updated' if changed_over_p else 'unchanged' }), services({ 'updated' if changed_over_s else 'unchanged' }).")
+    if args.force_manifest:
+        print(f"{DOC} Manifests-> created/updated {man_p+man_s}.")
+    else:
+        print(f"{DOC} Manifests-> updated-if-changed {man_p+man_s} (no create).")
 
     return 0
+
 
 if __name__ == "__main__":
     sys.exit(main())

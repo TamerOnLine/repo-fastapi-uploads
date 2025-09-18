@@ -1,8 +1,0 @@
-{
-  "name": "text_tools",
-  "provider": "local",
-  "tasks": [
-    "postprocess"
-  ],
-  "version": "0.1.0"
-}

@@ -35,11 +35,15 @@ Jinja2==3.1.4
 
 reportlab==4.4.3
 
+# Authentication
+passlib[bcrypt]
+python-jose
+cryptography
+
 # pdf-reader
 pdfminer.six
 pypdf
 pytest
 requests
 
-# pdf-reader development
-httpx
+

@@ -1,3 +1,4 @@
+# app/api/router_plugins.py
 from __future__ import annotations
 
 import importlib
@@ -9,7 +10,6 @@ from fastapi import APIRouter, Body, HTTPException, Path
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-
 router = APIRouter(prefix="/plugins", tags=["plugins"])
 
 
@@ -20,11 +20,11 @@ class PluginMeta(BaseModel):
 
 
 # ----------------------------
-# Loader helpers (lazy + initialize if available)
+# Loader helpers (lazy + init if available)
 # ----------------------------
 def _loader_module():
     mod = importlib.import_module("app.plugins.loader")
-    # حاول استدعاء أي دالة تهيئة إن وُجدت
+    # Try calling any init function if it exists
     for fn_name in (
         "ensure_plugins_loaded",
         "load_all_plugins",
@@ -46,6 +46,7 @@ def _loader_module():
 def _iter_plugin_instances() -> Iterable[Any]:
     loader = _loader_module()
 
+    # 1) Call a function that returns plugins (instances, dict, or list)
     for name in (
         "get_available_plugins",
         "list_available_plugins",
@@ -57,18 +58,24 @@ def _iter_plugin_instances() -> Iterable[Any]:
         if callable(fn):
             try:
                 plugins = fn()
-                if plugins:
+                if isinstance(plugins, dict):
+                    return plugins.values()
+                if isinstance(plugins, (list, tuple, set)):
                     return plugins
+                if plugins:
+                    return plugins  # generator/iterable
             except Exception:
                 pass
 
+    # 2) Registry containers
     for reg_name in ("REGISTRY", "PLUGINS", "plugins", "registry"):
         reg = getattr(loader, reg_name, None)
         if isinstance(reg, dict) and reg:
             return reg.values()
-        if isinstance(reg, (list | tuple)) and reg:
+        if isinstance(reg, (list, tuple)) and reg:
             return reg
 
+    # 3) Names -> get instance
     for name_api in ("get_plugin_names", "list_plugin_names", "available_plugin_names"):
         fn = getattr(loader, name_api, None)
         if callable(fn):
@@ -86,7 +93,7 @@ def _iter_plugin_instances() -> Iterable[Any]:
 
 def _instantiate_direct(name: str) -> Any | None:
     """
-    Fallback صارم: استورد app.plugins.<name>.plugin وابنِ Plugin().
+    Strict fallback: import app.plugins.<name>.plugin and build Plugin().
     """
     try:
         mod = importlib.import_module(f"app.plugins.{name}.plugin")
@@ -102,16 +109,15 @@ def _instantiate_direct(name: str) -> Any | None:
     except Exception:
         return None
 
-    # نفّذ load() إن وُجدت
+    # call load() if present
     try:
         load_fn = getattr(inst, "load", None)
         if callable(load_fn):
             load_fn()
     except Exception:
-        # حتى لو فشلت الـ load، نرجّع الـ instance (قد تعمل المهام الخفيفة)
         pass
 
-    # اسم افتراضي لو غير مضمّن
+    # ensure name exists
     if not getattr(inst, "name", None):
         try:
             inst.name = name
@@ -139,7 +145,6 @@ def _get_plugin_instance(name: str) -> Any | None:
         if isinstance(reg, dict) and name in reg:
             return reg[name]
 
-    # Fallback مباشر على باكيج البلجن
     return _instantiate_direct(name)
 
 
@@ -147,13 +152,18 @@ def _serialize_meta(plugin: Any) -> PluginMeta:
     name = getattr(plugin, "name", None) or getattr(getattr(plugin, "__class__", None), "__name__", "unknown")
     provider = getattr(plugin, "provider", None)
     tasks_attr = getattr(plugin, "tasks", None)
-    tasks = list(tasks_attr) if isinstance(tasks_attr, (list | tuple | set)) else []
+    tasks = list(tasks_attr) if isinstance(tasks_attr, (list, tuple, set)) else []
     return PluginMeta(name=str(name), provider=provider, tasks=tasks)
 
 
 # ----------------------------
 # Routes
 # ----------------------------
+@router.get("/ping")
+def ping():
+    return {"ok": True, "service": "plugins"}
+
+
 @router.get(
     "",
     response_model=list[PluginMeta],
@@ -202,7 +212,6 @@ async def run_plugin_task(
     declared_tasks = getattr(plugin, "tasks", [])
     fn = getattr(plugin, task, None)
 
-    # المسار (1): ميثود بنفس اسم المهمة إن وُجدت
     if callable(fn):
         try:
             if inspect.iscoroutinefunction(fn):
@@ -215,10 +224,8 @@ async def run_plugin_task(
         except Exception as e:  # noqa: BLE001
             raise HTTPException(status_code=500, detail=f"Task '{task}' failed: {e!s}") from e
 
-    # المسار (2): نقطة دخول عامة infer
     infer_fn = getattr(plugin, "infer", None)
     if callable(infer_fn):
-        # مرّر اسم المهمة داخل الـ payload حتى يقدر البلَجن يفرّق بين الـ subtasks
         forwarded = dict(payload)
         forwarded.setdefault("task", task)
         try:
@@ -232,9 +239,11 @@ async def run_plugin_task(
         except Exception as e:  # noqa: BLE001
             raise HTTPException(status_code=500, detail=f"Infer for '{task}' failed: {e!s}") from e
 
-    # لو لا دي ولا دي، يبقى المهمة غير متاحة فعلًا
-    available = list(declared_tasks) if isinstance(declared_tasks, (list | tuple | set)) else []
+    available = list(declared_tasks) if isinstance(declared_tasks, (list, tuple, set)) else []
     raise HTTPException(
         status_code=404,
         detail=f"Task '{task}' not found in plugin '{name}'. Available: {available or ['<none>']}",
     )
+
+# Backward-compatible alias
+plugins = router

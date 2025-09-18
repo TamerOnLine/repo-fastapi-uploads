@@ -1,8 +1,12 @@
 {
+  "code": "app/plugins/dummy/plugin.py",
+  "example_payload": "{}",
+  "folder": "dummy",
+  "kind": "plugin",
+  "models": [],
   "name": "dummy",
-  "provider": "dummy",
+  "provider": null,
   "tasks": [
     "ping"
-  ],
-  "version": "0.1.0"
+  ]
 }

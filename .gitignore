@@ -182,3 +182,9 @@ env-info.txt
 models_cache/
 samples/
 uploads/
+.secrets/
+
+# Logs
+tools/generate_project_overview.py
+docs/PROJECT_OVERVIEW.md
+docs/PROJECT_OVERVIEW.json

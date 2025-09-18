@@ -1,37 +1,36 @@
 from __future__ import annotations
-
 from abc import ABC, abstractmethod
-from typing import Any
-
+from typing import Any, Iterable
 
 class AIPlugin(ABC):
     """
-    Standard interface for any AI model plugin.
-
-    Attributes:
-        name (str): Name of the provider (usually matches the folder name).
-        tasks (List[str]): List of supported tasks such as "infer", "embed", "classify-image".
+    Base class for all plugins.
+    Optional extension points for dynamic prefetch:
+      - REQUIRED_MODELS: list[dict]  e.g. {"type":"hf","id":"facebook/bart-large-cnn"}
+      - def prefetch(self) -> None
+      - def required_models(self) -> Iterable[dict]
     """
-
     name: str = "unknown"
     tasks: list[str] = []
 
+    # Optional: static declarations of needed models
+    REQUIRED_MODELS: list[dict] = []
+
     @abstractmethod
     def load(self) -> None:
-        """
-        Load the model and required resources into memory (executed once).
-        """
+        """Load heavy resources lazily when the plugin is first used."""
         ...
 
     @abstractmethod
     def infer(self, payload: dict[str, Any]) -> dict[str, Any]:
-        """
-        General inference entry point. The plugin determines how to interpret the payload.
-
-        Args:
-            payload (Dict[str, Any]): Input data for inference.
-
-        Returns:
-            Dict[str, Any]: Inference result.
-        """
+        """Default/primary task (legacy). Many plugins define task methods instead."""
         ...
+
+    # Optional: dynamic list of required models
+    def required_models(self) -> Iterable[dict]:
+        return list(getattr(self, "REQUIRED_MODELS", []) or [])
+
+    # Optional: plugin-specific prefetch hook
+    def prefetch(self) -> None:
+        """Download/cache models ahead of time. Override if needed."""
+        return
