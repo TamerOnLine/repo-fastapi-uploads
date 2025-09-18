@@ -6,10 +6,9 @@ import inspect
 from collections.abc import Iterable
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Body, HTTPException, Path
+from fastapi import APIRouter, Body, HTTPException, Path, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
-
 
 router = APIRouter(prefix="/plugins", tags=["plugins"])
 
@@ -40,6 +39,7 @@ def _loader_module():
                 fn()
                 break
             except Exception:
+                # Best-effort init; ignore failures here
                 pass
     return mod
 
@@ -47,7 +47,7 @@ def _loader_module():
 def _iter_plugin_instances() -> Iterable[Any]:
     loader = _loader_module()
 
-    # 1) Call a function that returns plugins (instances, dict, or list)
+    # 1) Functions that return plugins (instances, dict, or list)
     for name in (
         "get_available_plugins",
         "list_available_plugins",
@@ -185,10 +185,12 @@ def list_plugins() -> list[PluginMeta]:
 def get_plugin(
     name: Annotated[str, Path(min_length=1, description="Plugin name (folder name).")],
 ) -> PluginMeta:
-    plugin = _get_plugin_instance(name)
-    if plugin is None:
-        raise HTTPException(status_code=404, detail=f"Plugin not found: {name}")
-    return _serialize_meta(plugin)
+    # اجلب نفس القائمة التي تعتمد عليها /plugins ثم صفّي بالاسم
+    for inst in _iter_plugin_instances():
+        meta = _serialize_meta(inst)
+        if meta.name == name:
+            return meta
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Plugin not found: {name}")
 
 
 @router.post(
@@ -208,7 +210,7 @@ async def run_plugin_task(
     """
     plugin = _get_plugin_instance(name)
     if plugin is None:
-        raise HTTPException(status_code=404, detail=f"Plugin not found: {name}")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Plugin not found: {name}")
 
     declared_tasks = getattr(plugin, "tasks", [])
     fn = getattr(plugin, task, None)
@@ -223,7 +225,7 @@ async def run_plugin_task(
         except HTTPException:
             raise
         except Exception as e:  # noqa: BLE001
-            raise HTTPException(status_code=500, detail=f"Task '{task}' failed: {e!s}") from e
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Task '{task}' failed: {e!s}") from e
 
     infer_fn = getattr(plugin, "infer", None)
     if callable(infer_fn):
@@ -238,11 +240,11 @@ async def run_plugin_task(
         except HTTPException:
             raise
         except Exception as e:  # noqa: BLE001
-            raise HTTPException(status_code=500, detail=f"Infer for '{task}' failed: {e!s}") from e
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Infer for '{task}' failed: {e!s}") from e
 
     available = list(declared_tasks) if isinstance(declared_tasks, (list, tuple, set)) else []
     raise HTTPException(
-        status_code=404,
+        status_code=status.HTTP_404_NOT_FOUND,
         detail=f"Task '{task}' not found in plugin '{name}'. Available: {available or ['<none>']}",
     )
 
