@@ -39,14 +39,14 @@ async def run_inference(req: Annotated[InferenceRequest, Body(...)]):
     Run inference by dynamically dispatching to a plugin + task.
     """
     if not req.plugin or not req.task:
-        raise HTTPException(status_code=400, detail="Plugin and task are required") from e
+        raise HTTPException(status_code=400, detail="Plugin and task are required")
     try:
         plugin = get_plugin_instance(req.plugin)
     except Exception as e:
         raise HTTPException(status_code=404, detail=f"Plugin not found: {req.plugin}") from e
     fn = getattr(plugin, req.task, None)
     if not callable(fn):
-        raise HTTPException(status_code=404, detail=f"Task '{req.task}' not found in plugin '{req.plugin}'") from e
+        raise HTTPException(status_code=404, detail=f"Task '{req.task}' not found in plugin '{req.plugin}'")
     try:
         if inspect.iscoroutinefunction(fn):
             result = await fn(req.payload)  # type: ignore
