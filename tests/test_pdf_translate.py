@@ -77,7 +77,6 @@ def test_pdf_reader_then_translate():
     assert up_j.get("ok") is True
     rel_path = up_j["rel_path"]
 
-
     pdf_reader = _find_plugin_with_task("extract_text") or "pdf_reader"
     xt = _json_ok(
         "POST",
