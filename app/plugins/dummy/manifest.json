@@ -1,12 +1,11 @@
 {
-  "code": "app/plugins/dummy/plugin.py",
-  "example_payload": "{}",
-  "folder": "dummy",
-  "kind": "plugin",
-  "models": [],
   "name": "dummy",
-  "provider": null,
+  "kind": "plugin",
+  "folder": "dummy",
+  "provider": "local",
+  "code": "app/plugins/dummy/plugin.py",
   "tasks": [
     "ping"
-  ]
+  ],
+  "models": []
 }

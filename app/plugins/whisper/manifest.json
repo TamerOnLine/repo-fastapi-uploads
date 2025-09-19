@@ -1,17 +1,11 @@
 {
-  "code": "app/plugins/whisper/plugin.py",
-  "example_payload": "{}",
-  "folder": "whisper",
-  "kind": "plugin",
-  "models": [
-    {
-      "id": "openai/whisper-small",
-      "type": "hf"
-    }
-  ],
   "name": "whisper",
-  "provider": null,
+  "kind": "plugin",
+  "folder": "whisper",
+  "provider": "local",
+  "code": "app/plugins/whisper/plugin.py",
   "tasks": [
     "transcribe"
-  ]
+  ],
+  "models": []
 }

@@ -8,20 +8,20 @@ from app.plugins.base import AIPlugin
 
 class Plugin(AIPlugin):
     # class-level defaults
-    name = "dummy"
-    tasks = ["ping"]
+    name = "text_tools"
+    tasks = ["arabic_normalize", "spellcheck_ar"]
     provider = "local"
-    _impl = None  # instance of app.services.dummy.service.Plugin
+    _impl = None  # instance of app.services.text_tools.service.Plugin
 
     def __init__(self) -> None:
         # also set on instance to avoid loaders reading wrong defaults
-        self.name = "dummy"
-        self.tasks = list(["ping"])
+        self.name = "text_tools"
+        self.tasks = list(["arabic_normalize", "spellcheck_ar"])
 
     def load(self) -> None:
         # Lazy import to avoid circular imports at startup
         if self._impl is None:
-            mod = importlib.import_module("app.services.dummy.service")
+            mod = importlib.import_module("app.services.text_tools.service")
             Impl = mod.Plugin
             self._impl = Impl()
             if hasattr(self._impl, "load"):
