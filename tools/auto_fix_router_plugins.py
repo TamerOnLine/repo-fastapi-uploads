@@ -1,4 +1,13 @@
+# tools/auto_fix_router_plugins.py
 from __future__ import annotations
+
+from pathlib import Path
+
+
+ROUTER_PATH = Path(__file__).resolve().parents[1] / "app" / "api" / "router_plugins.py"
+ROUTER_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+CONTENT = """from __future__ import annotations
 
 import importlib
 import inspect
@@ -9,7 +18,6 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Body, HTTPException, Path as FPath, status
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
-
 
 # Ruff B008-safe Body default
 BODY_JSON: dict = Body(...)
@@ -24,7 +32,7 @@ class PluginMeta(BaseModel):
 
 
 def _loader_module():
-    """Import app.plugins.loader and best-effort call any init function if present."""
+    \"\"\"Import app.plugins.loader and best-effort call any init function if present.\"\"\"
     mod = importlib.import_module("app.plugins.loader")
     for fn_name in (
         "ensure_plugins_loaded",
@@ -45,7 +53,7 @@ def _loader_module():
 
 
 def _instantiate_direct(name: str) -> Any | None:
-    """Strict filesystem fallback: import app.plugins.<name>.plugin:Plugin and instantiate."""
+    \"\"\"Strict filesystem fallback: import app.plugins.<name>.plugin:Plugin and instantiate.\"\"\"
     try:
         mod = importlib.import_module(f"app.plugins.{name}.plugin")
     except Exception:
@@ -77,7 +85,8 @@ def _instantiate_direct(name: str) -> Any | None:
 
 
 def _get_plugin_instance(name: str) -> Any | None:
-    """Prefer direct instantiation first (works with lazy wrappers), then use loader." """
+    \"\"\"Prefer direct instantiation first (works with lazy wrappers), then use loader.\"
+    \"\"\"
     inst = _instantiate_direct(name)
     if inst is not None:
         return inst
@@ -103,7 +112,7 @@ def _get_plugin_instance(name: str) -> Any | None:
 
 
 def _iter_plugin_instances() -> Iterable[Any]:
-    """Return iterable of instances (normalize any strings via _get_plugin_instance)."""
+    \"\"\"Return iterable of instances (normalize any strings via _get_plugin_instance).\"\"\"
     loader = _loader_module()
 
     def _normalize(seq):
@@ -190,7 +199,9 @@ def _dedupe_by_name(instances: list[Any]) -> list[Any]:
 
 
 def _serialize_meta(plugin: Any) -> PluginMeta:
-    name = getattr(plugin, "name", None) or getattr(getattr(plugin, "__class__", None), "__name__", "unknown")
+    name = getattr(plugin, "name", None) or getattr(
+        getattr(plugin, "__class__", None), "__name__", "unknown"
+    )
     provider = getattr(plugin, "provider", None)
     tasks_attr = getattr(plugin, "tasks", None)
     tasks = list(tasks_attr) if isinstance(tasks_attr, (list, tuple, set)) else []
@@ -204,10 +215,7 @@ def ping() -> dict[str, Any]:
 
 @router.get("", response_model=list[PluginMeta], summary="List all plugins")
 def list_plugins() -> list[PluginMeta]:
-    # 1) اكتشف البلجنات من نظام الملفات أولاً
     fs_instances = _discover_plugins_filesystem()
-
-    # 2) طَبِّع مخرجات اللودر (أسماء → instances)
     loader_instances: list[Any] = []
     for item in _iter_plugin_instances():
         if isinstance(item, str):
@@ -216,13 +224,7 @@ def list_plugins() -> list[PluginMeta]:
                 loader_instances.append(inst)
         elif item is not None:
             loader_instances.append(item)
-
-    # 3) لو وجدنا شيء على نظام الملفات، نستخدمه حصراً (لتفادي "base"/"loader")
-    if fs_instances:
-        instances = _dedupe_by_name(fs_instances)
-    else:
-        instances = _dedupe_by_name(loader_instances)
-
+    instances = _dedupe_by_name(fs_instances + loader_instances)
     return [_serialize_meta(p) for p in instances]
 
 
@@ -254,7 +256,6 @@ def _make_task_handler(PluginCls: type, task_name: str):
                 detail=f"Task '{task_name}' not found.",
             )
         return fn(payload or {})
-
     return handler
 
 
@@ -317,6 +318,17 @@ async def run_plugin_task(
         detail=f"Task '{task}' not found in plugin '{name}'. Available: {available or ['<none>']}",
     )
 
-
 # Backward-compatible alias
 plugins = router
+"""
+
+
+def main() -> None:
+    # enforce LF newlines
+    text = CONTENT.replace("\\r\\n", "\\n")
+    ROUTER_PATH.write_text(text, encoding="utf-8")
+    print(f"[OK] Wrote {ROUTER_PATH}")
+
+
+if __name__ == "__main__":
+    main()
