@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
+import numpy as np
 import requests
 
 from app.core.config import get_settings
@@ -62,7 +63,6 @@ def _load_audio_mono16k(audio_bytes: bytes) -> tuple[list[float], int]:
         with io.BytesIO(audio_bytes) as bio:
             data, sr = sf.read(bio, dtype="float32", always_2d=False)
         # Convert to mono
-        import numpy as np
 
         if data.ndim > 1:
             data = data.mean(axis=1)
@@ -75,7 +75,6 @@ def _load_audio_mono16k(audio_bytes: bytes) -> tuple[list[float], int]:
                 sr = 16000
             except Exception:
                 # Fallback: simple naive resample (not ideal)
-                import numpy as np
 
                 ratio = 16000 / float(sr)
                 new_len = int(round(len(data) * ratio))
@@ -92,7 +91,6 @@ def _load_audio_mono16k(audio_bytes: bytes) -> tuple[list[float], int]:
     # Try librosa directly
     try:
         import librosa
-        import numpy as np
 
         y, sr = librosa.load(io.BytesIO(audio_bytes), sr=16000, mono=True)
         y = y.astype("float32")
@@ -288,9 +286,6 @@ class Plugin(AIPlugin):
                 pipe_kwargs["generate_kwargs"] = {"task": task}
 
             # Run
-            # Pipeline accepts either file path or numpy array; we pass array
-            import numpy as np
-
             audio_np = np.asarray(samples, dtype="float32")
             out = _PIPELINE(audio_np, **pipe_kwargs)
 
@@ -321,7 +316,6 @@ class Plugin(AIPlugin):
             return result
 
         # Fallback: manual generate() with processor+model
-        import numpy as np
         from transformers import GenerationConfig
 
         audio_np = np.asarray(samples, dtype="float32")
