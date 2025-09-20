@@ -4,6 +4,8 @@
   "folder": "whisper",
   "provider": "local",
   "code": "app/plugins/whisper/plugin.py",
-  "tasks": [],
+  "tasks": [
+    "transcribe"
+  ],
   "models": []
 }

@@ -1,5 +1,5 @@
 {
-  "code": "app/services/text_tools/plugin.py",
+  "code": "app/services/text_tools/service.py",
   "example_payload": "{}",
   "folder": "text_tools",
   "kind": "service",

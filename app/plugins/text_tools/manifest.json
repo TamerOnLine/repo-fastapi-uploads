@@ -4,6 +4,9 @@
   "folder": "text_tools",
   "provider": "local",
   "code": "app/plugins/text_tools/plugin.py",
-  "tasks": [],
+  "tasks": [
+    "arabic_normalize",
+    "spellcheck_ar"
+  ],
   "models": []
 }

@@ -5,7 +5,7 @@
   "kind": "service",
   "models": [],
   "name": "pdf_reader",
-  "provider": null,
+  "provider": "local",
   "tasks": [
     "extract_text"
   ]

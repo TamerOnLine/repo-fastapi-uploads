@@ -1,13 +1,17 @@
-# pdf_reader
+# whisper
 
 **Type:** service
-**Provider:** local
-**Tasks:** extract_text
+**Provider:** _unknown_
+**Tasks:** transcribe
 
+Whisper ASR plugin.
 
+Tasks:
+  - transcribe:  {rel_path|url|base64}[, language, task, return_segments, translate]
+                 -> {'text', 'language', 'segments?[]', 'duration?'}
 
 ## Models
-- _None_
+- {"type": "hf", "id": "openai/whisper-small"}
 
 ## Usage
 
@@ -20,7 +24,7 @@
 
 ### cURL Example
 ```bash
-curl -X POST "http://localhost:8000/services/pdf_reader/extract_text"      -H "Content-Type: application/json"      -d '{}'
+curl -X POST "http://localhost:8000/services/whisper/transcribe"      -H "Content-Type: application/json"      -d '{}'
 ```
 
 ### Python Example
@@ -28,7 +32,7 @@ curl -X POST "http://localhost:8000/services/pdf_reader/extract_text"      -H "C
 import requests
 
 resp = requests.post(
-    "http://localhost:8000/services/pdf_reader/extract_text",
+    "http://localhost:8000/services/whisper/transcribe",
     json={},
     timeout=60,
 )

@@ -1,8 +1,8 @@
-# pdf_reader
+# dummy
 
 **Type:** service
-**Provider:** local
-**Tasks:** extract_text
+**Provider:** _unknown_
+**Tasks:** ping
 
 
 
@@ -20,7 +20,7 @@
 
 ### cURL Example
 ```bash
-curl -X POST "http://localhost:8000/services/pdf_reader/extract_text"      -H "Content-Type: application/json"      -d '{}'
+curl -X POST "http://localhost:8000/services/dummy/ping"      -H "Content-Type: application/json"      -d '{}'
 ```
 
 ### Python Example
@@ -28,7 +28,7 @@ curl -X POST "http://localhost:8000/services/pdf_reader/extract_text"      -H "C
 import requests
 
 resp = requests.post(
-    "http://localhost:8000/services/pdf_reader/extract_text",
+    "http://localhost:8000/services/dummy/ping",
     json={},
     timeout=60,
 )

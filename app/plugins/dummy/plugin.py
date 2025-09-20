@@ -8,13 +8,13 @@ from app.plugins.base import AIPlugin
 
 class Plugin(AIPlugin):
     name = "dummy"
-    tasks = []
+    tasks = ["ping"]
     provider = "local"
     _impl = None  # instance of app.services.dummy.service.Plugin
 
     def __init__(self) -> None:
         self.name = "dummy"
-        self.tasks = list([])
+        self.tasks = list(["ping"])
 
     def load(self) -> None:
         if self._impl is None:

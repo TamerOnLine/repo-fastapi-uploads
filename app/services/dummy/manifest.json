@@ -1,0 +1,12 @@
+{
+  "code": "app/services/dummy/service.py",
+  "example_payload": "{}",
+  "folder": "dummy",
+  "kind": "service",
+  "models": [],
+  "name": "dummy",
+  "provider": null,
+  "tasks": [
+    "ping"
+  ]
+}

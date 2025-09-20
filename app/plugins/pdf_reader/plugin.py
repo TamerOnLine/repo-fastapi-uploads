@@ -8,13 +8,13 @@ from app.plugins.base import AIPlugin
 
 class Plugin(AIPlugin):
     name = "pdf_reader"
-    tasks = []
+    tasks = ["extract_text"]
     provider = "local"
     _impl = None  # instance of app.services.pdf_reader.service.Plugin
 
     def __init__(self) -> None:
         self.name = "pdf_reader"
-        self.tasks = list([])
+        self.tasks = list(["extract_text"])
 
     def load(self) -> None:
         if self._impl is None:

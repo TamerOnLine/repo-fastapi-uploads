@@ -4,6 +4,8 @@
   "folder": "pdf_reader",
   "provider": "local",
   "code": "app/plugins/pdf_reader/plugin.py",
-  "tasks": [],
+  "tasks": [
+    "extract_text"
+  ],
   "models": []
 }

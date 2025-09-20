@@ -1,0 +1,17 @@
+{
+  "code": "app/services/whisper/service.py",
+  "example_payload": "{}",
+  "folder": "whisper",
+  "kind": "service",
+  "models": [
+    {
+      "id": "openai/whisper-small",
+      "type": "hf"
+    }
+  ],
+  "name": "whisper",
+  "provider": null,
+  "tasks": [
+    "transcribe"
+  ]
+}

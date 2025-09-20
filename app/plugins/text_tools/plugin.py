@@ -8,13 +8,13 @@ from app.plugins.base import AIPlugin
 
 class Plugin(AIPlugin):
     name = "text_tools"
-    tasks = []
+    tasks = ["arabic_normalize", "spellcheck_ar"]
     provider = "local"
     _impl = None  # instance of app.services.text_tools.service.Plugin
 
     def __init__(self) -> None:
         self.name = "text_tools"
-        self.tasks = list([])
+        self.tasks = list(["arabic_normalize", "spellcheck_ar"])
 
     def load(self) -> None:
         if self._impl is None:

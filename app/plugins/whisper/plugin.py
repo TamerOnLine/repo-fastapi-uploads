@@ -8,13 +8,13 @@ from app.plugins.base import AIPlugin
 
 class Plugin(AIPlugin):
     name = "whisper"
-    tasks = []
+    tasks = ["transcribe"]
     provider = "local"
     _impl = None  # instance of app.services.whisper.service.Plugin
 
     def __init__(self) -> None:
         self.name = "whisper"
-        self.tasks = list([])
+        self.tasks = list(["transcribe"])
 
     def load(self) -> None:
         if self._impl is None:
