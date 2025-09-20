@@ -188,3 +188,4 @@ uploads/
 tools/generate_project_overview.py
 docs/PROJECT_OVERVIEW.md
 docs/PROJECT_OVERVIEW.json
+actions-runner/
