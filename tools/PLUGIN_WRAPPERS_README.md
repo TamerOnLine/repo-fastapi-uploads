@@ -25,9 +25,7 @@ app/plugins/pdf_reader/
 
 ### 1. Activate virtual environment
 ```powershell
-# Activate venv dynamically from current folder
-$venv = Join-Path (Get-Location) ".venv\Scripts\Activate.ps1"
-& $venv
+& Q:/repo-fastapi-uploads/.venv/Scripts/Activate.ps1
 ```
 
 ### 2. Commands
