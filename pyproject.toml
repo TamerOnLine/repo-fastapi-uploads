@@ -1,5 +1,26 @@
-# Project-wide tooling config (Ruff-only)
+# pyproject.toml
 
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "repo-fastapi-uploads"
+version = "0.1.0"
+description = "NeuroServe / repo-fastapi-uploads"
+requires-python = ">=3.12"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+# Only include the "app" package, exclude accidental top-level packages
+include = ["app*"]
+exclude = ["secrets*", "tests*", "actions-runner*", ".github*"]
+
+# --------------------------------
+# Ruff configuration (lint/format)
+# --------------------------------
 [tool.ruff]
 target-version = "py312"
 line-length = 120
@@ -8,7 +29,7 @@ exclude = [
 ]
 
 [tool.ruff.lint]
-# E,F,I: (pycodestyle, pyflakes, isort via Ruff)
+# E,F,I: pycodestyle, pyflakes, isort (via Ruff)
 # UP: pyupgrade, B: bugbear (logic-level lint checks)
 select = ["E", "F", "I", "UP", "B"]
 ignore = []
@@ -27,13 +48,3 @@ line-ending = "auto"
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["E501"]
 "scripts/**" = ["E501"]
-
-# --- Usage Notes (for README) ---
-# Run lint checks:
-#   ruff check .
-#
-# Auto-fix issues (unused imports, spacing, import order, etc.):
-#   ruff check . --fix
-#
-# Format code (Black-like):
-#   ruff format .
